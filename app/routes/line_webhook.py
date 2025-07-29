@@ -108,8 +108,27 @@ def handle_message_dispatcher(event):
                 current_app.logger.info(f"語音新增提醒對象指令: 名稱={member_name}, 類型={command_type}")
                 
                 # 處理新增成員指令
-                success, message, extra_info = VoiceService.process_add_member_command(user_id, member_name, command_type)
-                line_bot_api.push_message(user_id, TextSendMessage(text=message))
+                try:
+                    success, message, extra_info = VoiceService.process_add_member_command(user_id, member_name, command_type)
+                    
+                    # 確保 message 是有效的字串
+                    if message and isinstance(message, str):
+                        line_bot_api.push_message(user_id, TextSendMessage(text=message))
+                    else:
+                        # 如果 message 無效，發送預設錯誤訊息
+                        current_app.logger.error(f"語音新增成員返回無效訊息: {message}")
+                        fallback_msg = f"❌ 處理語音指令時發生錯誤，請稍後再試。"
+                        line_bot_api.push_message(user_id, TextSendMessage(text=fallback_msg))
+                        
+                except Exception as e:
+                    current_app.logger.error(f"處理語音新增成員指令時發生異常: {e}")
+                    import traceback
+                    current_app.logger.error(f"異常詳情: {traceback.format_exc()}")
+                    
+                    # 發送用戶友好的錯誤訊息
+                    error_msg = f"❌ 新增成員「{member_name}」時發生錯誤，請稍後再試。"
+                    line_bot_api.push_message(user_id, TextSendMessage(text=error_msg))
+                
                 return
             
             # 先檢查是否為用藥提醒指令（優先於選單指令）
@@ -193,7 +212,15 @@ def handle_message_dispatcher(event):
                                         import traceback
                                         current_app.logger.error(f"詳細錯誤: {traceback.format_exc()}")
                                 elif not reminders:
-                                    current_app.logger.warning(f"⚠️ 無法取得用戶 {user_id} 成員「{target_member}」的提醒列表")
+                                    current_app.logger.warning(f"⚠️ 無法取得用戶 {user_id} 成員「{target_member}」的提醒列表，可能是資料庫同步問題")
+                                    # 嘗試直接查詢確認
+                                    from app.utils.db import get_db_connection
+                                    db = get_db_connection()
+                                    if db:
+                                        with db.cursor() as cursor:
+                                            cursor.execute("SELECT COUNT(*) as count FROM medicine_schedule WHERE recorder_id = %s AND member = %s", (user_id, target_member))
+                                            count_result = cursor.fetchone()
+                                            current_app.logger.info(f"🔍 直接查詢資料庫結果: 用戶 {user_id} 成員「{target_member}」有 {count_result['count'] if count_result else 0} 筆提醒")
                                 else:
                                     current_app.logger.error("❌ 無法取得 LIFF_ID_MANUAL_REMINDER 配置")
                             else:

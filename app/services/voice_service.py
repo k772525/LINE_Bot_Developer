@@ -1,5 +1,3 @@
-# app/services/voice_service.py
-
 import os
 import tempfile
 import traceback
@@ -13,6 +11,9 @@ import pymysql
 
 from ..utils.db import DB
 from flask import current_app
+
+# 全域變數來追蹤 FFmpeg 警告是否已顯示
+_ffmpeg_warning_shown = False
 
 class VoiceService:
     """語音輸入處理服務"""
@@ -79,13 +80,18 @@ class VoiceService:
                 if ("ffmpeg" in error_str or "ffprobe" in error_str or 
                     "winerror 2" in error_str or "系統找不到指定的檔案" in error_str or
                     "no such file or directory" in error_str):
-                    current_app.logger.warning(
-                        "FFmpeg 未安裝或不在 PATH 中。\n"
-                        "建議安裝 FFmpeg 以獲得更好的音頻支援：\n"
-                        "1. Windows: 下載 https://ffmpeg.org/download.html\n"
-                        "2. 或使用 conda: conda install ffmpeg\n"
-                        "3. 或使用 pip: pip install ffmpeg-python"
-                    )
+                    
+                    # 使用全域變數確保警告只顯示一次
+                    global _ffmpeg_warning_shown
+                    if not _ffmpeg_warning_shown:
+                        current_app.logger.warning(
+                            "FFmpeg 未安裝或不在 PATH 中。語音功能將使用備用方法處理音頻，"
+                            "建議在生產環境安裝 FFmpeg 以獲得更好的音頻支援。"
+                        )
+                        _ffmpeg_warning_shown = True
+                    else:
+                        # 後續只記錄簡單的日誌
+                        current_app.logger.info("使用備用音頻處理方法（FFmpeg 不可用）")
                 
                 # 備用方法：嘗試簡單的格式轉換
                 current_app.logger.info("嘗試使用備用音頻處理方法")
@@ -229,7 +235,7 @@ class VoiceService:
                     if confidence > 0.6:
                         return transcript.strip()
                     else:
-                        current_app.logger.warning(f"語音識別信心度過低: {confidence:.2f}, 內容: '{transcript.strip()}'")
+                        current_app.logger.warning(f"語音識別信心度過低: {confidence:.2f}, 內容: '{transcript.strip()}', 編碼: {attempt['description']}")
                         continue  # 嘗試下一種編碼
                 else:
                     current_app.logger.warning(f"{attempt['description']} 格式語音識別沒有結果")
@@ -703,23 +709,32 @@ class VoiceService:
                 return False, "❌ 成員名稱不能為空，請重新輸入。", {}
             
             # 新增成員
-            success = UserService.add_new_member(user_id, member_name)
-            
-            if success:
-                current_app.logger.info(f"語音新增成員成功: 用戶 {user_id} 新增成員 '{member_name}'")
+            try:
+                success = UserService.add_new_member(user_id, member_name)
                 
-                # 根據指令類型返回不同的回應訊息
-                if command_type in ['add_family', 'add_member']:
-                    message = f"✅ 成功新增家人「{member_name}」！\n\n您現在可以為「{member_name}」設定用藥提醒了。"
+                if success:
+                    current_app.logger.info(f"語音新增成員成功: 用戶 {user_id} 新增成員 '{member_name}'")
+                    
+                    # 根據指令類型返回不同的回應訊息
+                    if command_type in ['add_family', 'add_member']:
+                        message = f"✅ 成功新增家人「{member_name}」！\n\n您現在可以為「{member_name}」設定用藥提醒了。"
+                    else:
+                        message = f"✅ 成功新增提醒對象「{member_name}」！\n\n您現在可以為「{member_name}」設定用藥提醒了。"
+                    
+                    return True, message, {
+                        'member_added': True,
+                        'member_name': member_name,
+                        'command_type': command_type
+                    }
                 else:
-                    message = f"✅ 成功新增提醒對象「{member_name}」！\n\n您現在可以為「{member_name}」設定用藥提醒了。"
-                
-                return True, message, {
-                    'member_added': True,
-                    'member_name': member_name,
-                    'command_type': command_type
-                }
-            else:
+                    return False, f"❌ 新增提醒對象「{member_name}」失敗，請稍後再試。", {}
+                    
+            except ValueError as ve:
+                # UserService.add_new_member 拋出的 ValueError（如成員已存在）
+                current_app.logger.warning(f"語音新增成員被拒絕: {ve}")
+                return False, f"❌ {str(ve)}", {}
+            except Exception as add_error:
+                current_app.logger.error(f"新增成員時發生錯誤: {add_error}")
                 return False, f"❌ 新增提醒對象「{member_name}」失敗，請稍後再試。", {}
                 
         except Exception as e:
