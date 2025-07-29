@@ -220,3 +220,6 @@ tests/
 # 快取檔案
 .cache/
 cache/
+
+# 配置檔案 (包含敏感資料)
+env.yaml
