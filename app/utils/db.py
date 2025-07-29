@@ -15,35 +15,47 @@ from typing import Optional, Dict, Any
 # --- 資料庫連線管理 ---
 
 def get_db_connection():
-    """從 Flask 的 g 物件取得資料庫連線，若不存在則透過 Cloud SQL Unix socket 建立。"""
+    """從 Flask 的 g 物件取得資料庫連線，若不存在則建立新連線。"""
     try:
         if 'db' not in g:
-            if os.environ.get("DB_SOCKET_PATH"):
-                # 使用 Cloud SQL Auth Proxy 的 Unix socket 路徑
+            # 檢查是否在 Cloud Run 環境中使用 Unix socket
+            socket_path = os.environ.get("DB_SOCKET_PATH")
+            is_cloud_run = os.environ.get('K_SERVICE') is not None
+            
+            if socket_path and is_cloud_run:
+                # 在 Cloud Run 中使用 Cloud SQL Auth Proxy 的 Unix socket
                 g.db = pymysql.connect(
                     user=os.environ.get('DB_USER'),
                     password=os.environ.get('DB_PASS'),
                     database=os.environ.get('DB_NAME'),
-                    unix_socket=os.environ.get('DB_SOCKET_PATH'),
+                    unix_socket=socket_path,
                     charset='utf8mb4',
                     cursorclass=pymysql.cursors.DictCursor,
                     connect_timeout=10
                 )
             else:
-                # fallback: 一般 host-based 連線（例如本機測試用）
+                # 使用 TCP 連線（本地開發或其他環境）
+                db_host = os.environ.get('DB_HOST', 'localhost')
+                db_port = int(os.environ.get('DB_PORT', 3306))
+                
                 g.db = pymysql.connect(
-                    host=os.environ.get('DB_HOST'),
+                    host=db_host,
                     user=os.environ.get('DB_USER'),
                     password=os.environ.get('DB_PASS'),
                     database=os.environ.get('DB_NAME'),
-                    port=int(os.environ.get('DB_PORT', 3306)),
+                    port=db_port,
                     charset='utf8mb4',
                     cursorclass=pymysql.cursors.DictCursor,
-                    connect_timeout=10
+                    connect_timeout=10,
+                    autocommit=False
                 )
         return g.db
     except pymysql.MySQLError as e:
         print(f"資料庫連線錯誤: {e}")
+        print(f"連線參數: host={os.environ.get('DB_HOST')}, port={os.environ.get('DB_PORT')}, user={os.environ.get('DB_USER')}, database={os.environ.get('DB_NAME')}")
+        return None
+    except Exception as e:
+        print(f"資料庫連線發生未預期錯誤: {e}")
         return None
 
 def close_db_connection(e=None):
@@ -186,32 +198,46 @@ class DB:
         """
         【邏輯強化】重命名成員，並同步更新所有關聯表。
         此操作在一個事務中完成，確保資料一致性。
+        注意：必須先暫時禁用外鍵檢查，或者使用正確的更新順序。
         """
         db = get_db_connection()
         if not db: return 0
         try:
             with db.cursor() as cursor:
-                # 步驟 1: 更新藥歷主表
-                q1 = "UPDATE medication_main SET member = %s WHERE recorder_id = %s AND member = %s"
+                # 暫時禁用外鍵檢查
+                cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
+                
+                # 步驟 1: 更新成員主表
+                q1 = "UPDATE members SET member = %s WHERE recorder_id = %s AND member = %s"
                 cursor.execute(q1, (new_name, user_id, old_name))
+                rows_affected = cursor.rowcount
 
                 # 步驟 2: 更新用藥提醒表
                 q2 = "UPDATE medicine_schedule SET member = %s WHERE recorder_id = %s AND member = %s"
                 cursor.execute(q2, (new_name, user_id, old_name))
-                
-                # 步驟 3: 更新家人綁定關係表
-                q3 = "UPDATE invitation_recipients SET relation_type = %s WHERE recorder_id = %s AND relation_type = %s"
-                cursor.execute(q3, (new_name, user_id, old_name))
 
-                # 步驟 4: 最後更新成員主表
-                q4 = "UPDATE members SET member = %s WHERE recorder_id = %s AND member = %s"
+                # 步驟 3: 更新藥歷主表
+                q3 = "UPDATE medication_main SET member = %s WHERE recorder_id = %s AND member = %s"
+                cursor.execute(q3, (new_name, user_id, old_name))
+                
+                # 步驟 4: 更新家人綁定關係表
+                q4 = "UPDATE invitation_recipients SET relation_type = %s WHERE recorder_id = %s AND relation_type = %s"
                 cursor.execute(q4, (new_name, user_id, old_name))
-                rows_affected = cursor.rowcount
+
+                # 重新啟用外鍵檢查
+                cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
 
             db.commit()
             return rows_affected
         except pymysql.Error as e:
             db.rollback()
+            # 確保重新啟用外鍵檢查
+            try:
+                with db.cursor() as cursor:
+                    cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
+                db.commit()
+            except:
+                pass
             print(f"重命名成員時發生資料庫錯誤: {e}")
             return 0
     @staticmethod
@@ -499,27 +525,73 @@ class DB:
         # 整合組員的 create 和 update 邏輯
         db = get_db_connection()
         if not db: return None
+        
+        # 添加調試日誌
+        print(f"[DEBUG] 創建提醒資料: {data}")
+        
         with db.cursor() as cursor:
-            sql = """
-            INSERT INTO medicine_schedule (
-                recorder_id, member, drug_name, dose_quantity, notes,
-                frequency_name, time_slot_1, time_slot_2, time_slot_3, time_slot_4, time_slot_5
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-                dose_quantity = VALUES(dose_quantity), notes = VALUES(notes),
-                frequency_name = VALUES(frequency_name), time_slot_1 = VALUES(time_slot_1), 
-                time_slot_2 = VALUES(time_slot_2), time_slot_3 = VALUES(time_slot_3),
-                time_slot_4 = VALUES(time_slot_4), time_slot_5 = VALUES(time_slot_5), 
-                updated_at = NOW()
+            # 先檢查是否已存在相同的 (recorder_id, member, drug_name) 組合
+            check_sql = """
+            SELECT id FROM medicine_schedule 
+            WHERE recorder_id = %s AND member = %s AND drug_name = %s
             """
-            params = (
-                data['recorder_id'], data['member'], data.get('drug_name'), data.get('dose_quantity'), data.get('notes'),
-                data.get('frequency_name'), data.get('time_slot_1'), data.get('time_slot_2'), 
-                data.get('time_slot_3'), data.get('time_slot_4'), data.get('time_slot_5')
-            )
-            cursor.execute(sql, params)
-            db.commit()
-            return cursor.lastrowid
+            cursor.execute(check_sql, (data['recorder_id'], data['member'], data.get('drug_name')))
+            existing_reminder = cursor.fetchone()
+            
+            if existing_reminder:
+                # 如果存在，更新現有記錄
+                print(f"[DEBUG] 發現現有提醒 ID: {existing_reminder['id']}，將進行更新")
+                update_sql = """
+                UPDATE medicine_schedule SET
+                    dose_quantity = %s, notes = %s, frequency_name = %s,
+                    time_slot_1 = %s, time_slot_2 = %s, time_slot_3 = %s,
+                    time_slot_4 = %s, time_slot_5 = %s, updated_at = NOW()
+                WHERE id = %s
+                """
+                update_params = (
+                    data.get('dose_quantity'), data.get('notes'), data.get('frequency_name'),
+                    data.get('time_slot_1'), data.get('time_slot_2'), data.get('time_slot_3'),
+                    data.get('time_slot_4'), data.get('time_slot_5'), existing_reminder['id']
+                )
+                
+                print(f"[DEBUG] 更新 SQL 參數: {update_params}")
+                try:
+                    cursor.execute(update_sql, update_params)
+                    db.commit()
+                    reminder_id = existing_reminder['id']
+                    print(f"[DEBUG] 更新的提醒 ID: {reminder_id}")
+                    return reminder_id
+                except Exception as e:
+                    print(f"[ERROR] 更新提醒時發生錯誤: {e}")
+                    db.rollback()
+                    return None
+            else:
+                # 如果不存在，創建新記錄
+                print(f"[DEBUG] 創建新提醒記錄")
+                insert_sql = """
+                INSERT INTO medicine_schedule (
+                    recorder_id, member, drug_name, dose_quantity, notes,
+                    frequency_name, time_slot_1, time_slot_2, time_slot_3, time_slot_4, time_slot_5,
+                    created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+                """
+                insert_params = (
+                    data['recorder_id'], data['member'], data.get('drug_name'), data.get('dose_quantity'), data.get('notes'),
+                    data.get('frequency_name'), data.get('time_slot_1'), data.get('time_slot_2'), 
+                    data.get('time_slot_3'), data.get('time_slot_4'), data.get('time_slot_5')
+                )
+                
+                print(f"[DEBUG] 插入 SQL 參數: {insert_params}")
+                try:
+                    cursor.execute(insert_sql, insert_params)
+                    db.commit()
+                    reminder_id = cursor.lastrowid
+                    print(f"[DEBUG] 創建的提醒 ID: {reminder_id}")
+                    return reminder_id
+                except Exception as e:
+                    print(f"[ERROR] 創建提醒時發生錯誤: {e}")
+                    db.rollback()
+                    return None
 
     @staticmethod
     def get_reminders(user_id, member_name):
@@ -551,6 +623,42 @@ class DB:
             query = "SELECT * FROM medicine_schedule WHERE id = %s"
             cursor.execute(query, (reminder_id,))
             return cursor.fetchone()
+
+    @staticmethod
+    def update_reminder(reminder_id, reminder_data):
+        """更新指定提醒"""
+        db = get_db_connection()
+        if not db: return None
+        try:
+            with db.cursor() as cursor:
+                # 構建更新 SQL
+                sql = """
+                UPDATE medicine_schedule SET
+                    drug_name = %s, dose_quantity = %s, notes = %s,
+                    frequency_name = %s, time_slot_1 = %s, time_slot_2 = %s, 
+                    time_slot_3 = %s, time_slot_4 = %s, time_slot_5 = %s,
+                    updated_at = NOW()
+                WHERE id = %s AND recorder_id = %s
+                """
+                params = (
+                    reminder_data.get('drug_name'), reminder_data.get('dose_quantity'), 
+                    reminder_data.get('notes'), reminder_data.get('frequency_name'),
+                    reminder_data.get('time_slot_1'), reminder_data.get('time_slot_2'), 
+                    reminder_data.get('time_slot_3'), reminder_data.get('time_slot_4'), 
+                    reminder_data.get('time_slot_5'), reminder_id, reminder_data.get('recorder_id')
+                )
+                cursor.execute(sql, params)
+                db.commit()
+                
+                # 返回更新的行數，如果大於0表示成功
+                if cursor.rowcount > 0:
+                    return reminder_id
+                else:
+                    return None
+        except Exception as e:
+            print(f"更新提醒失敗: {e}")
+            db.rollback()
+            return None
 
     @staticmethod
     def delete_reminder(reminder_id):

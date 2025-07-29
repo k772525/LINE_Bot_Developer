@@ -6,8 +6,8 @@ import time
 import base64
 import traceback
 from typing import List, Dict, Any, Tuple
-from google.genai import types
-from google import genai
+import google.generativeai as genai
+from google.generativeai import types
 import pymysql
 
 def get_all_drugs_from_db(db_config: dict):

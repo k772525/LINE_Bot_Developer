@@ -1,10 +1,18 @@
-# 用藥提醒 LINE Bot 🏥💊
+# 🏥 智能藥品管理 LINE Bot
 
-[![CI/CD Pipeline](https://github.com/your-username/your-repo/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/your-username/your-repo/actions/workflows/ci-cd.yml)
-[![Deploy to GCP](https://github.com/your-username/your-repo/actions/workflows/deploy-gcp.yml/badge.svg)](https://github.com/your-username/your-repo/actions/workflows/deploy-gcp.yml)
-[![Security Scan](https://github.com/your-username/your-repo/actions/workflows/security-scan.yml/badge.svg)](https://github.com/your-username/your-repo/actions/workflows/security-scan.yml)
+<div align="center">
 
-一個智能的 LINE Bot 應用程式，幫助用戶管理藥物提醒、辨識藥品、記錄健康狀況，並支援家人綁定功能。
+![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
+![Flask](https://img.shields.io/badge/Flask-2.3+-green.svg)
+![LINE Bot](https://img.shields.io/badge/LINE-Bot%20API-00C300.svg)
+![Google Cloud](https://img.shields.io/badge/Google%20Cloud-Run-4285F4.svg)
+![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+
+**一個功能完整的 LINE Bot 智能藥品管理系統**
+
+[功能特色](#-功能特色) • [快速開始](#-快速開始) • [部署指南](#-部署) • [API 文檔](#-api-文檔) • [貢獻指南](#-貢獻)
+
+</div>
 
 ## ✨ 主要功能
 
@@ -32,44 +40,8 @@
 ### 環境需求
 
 - Python 3.11+
-- MySQL 5.7+
+- MySQL 8.0+
 - Docker (可選)
-
-### 本地開發設置
-
-1. **克隆專案**
-   ```bash
-   git clone https://github.com/your-username/your-repo.git
-   cd your-repo
-   ```
-
-2. **安裝依賴**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **設置環境變數**
-   ```bash
-   cp .env.example .env
-   # 編輯 .env 檔案，填入您的配置
-   ```
-
-4. **啟動應用程式**
-   ```bash
-   python run.py
-   ```
-
-### Docker 部署
-
-1. **建構映像**
-   ```bash
-   docker build -t pill-reminder-bot .
-   ```
-
-2. **運行容器**
-   ```bash
-   docker run -p 8080:8080 --env-file .env pill-reminder-bot
-   ```
 
 ## 🔧 配置說明
 
@@ -208,43 +180,7 @@ SECRET_KEY=your_secret_key
 - 依賴項目自動更新 (Dependabot)
 - 容器映像漏洞檢測
 
-## 🧪 測試
 
-```bash
-# 運行測試
-python -m pytest
-
-# 運行測試並生成覆蓋率報告
-python -m pytest --cov=app
-
-# 程式碼風格檢查
-flake8 app/
-```
-
-## 📝 貢獻指南
-
-1. Fork 此專案
-2. 創建功能分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交變更 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 開啟 Pull Request
-
-請確保：
-- 遵循程式碼風格指南
-- 添加適當的測試
-- 更新相關文檔
-
-## 📄 授權
-
-此專案採用 MIT 授權 - 詳見 [LICENSE](LICENSE) 檔案
-
-## 🆘 支援
-
-如果您遇到問題或有建議，請：
-
-1. 查看 [Issues](https://github.com/your-username/your-repo/issues)
-2. 創建新的 Issue
-3. 聯繫維護者
 
 ## 🙏 致謝
 

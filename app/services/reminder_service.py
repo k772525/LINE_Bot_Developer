@@ -4,6 +4,7 @@ import schedule
 import time
 import traceback
 from datetime import datetime
+from flask import current_app
 from ..utils.db import DB
 from app import line_bot_api
 from linebot.models import TextSendMessage
@@ -22,13 +23,20 @@ class ReminderService:
         reminder_data = {'recorder_id': user_id, **form_data}
         
         if reminder_id:
+            # 編輯模式：更新現有提醒
             existing_reminder = DB.get_reminder_by_id(reminder_id)
             if existing_reminder:
                 reminder_data['member'] = existing_reminder['member']
                 # 確保藥物名稱不會被清空
                 if 'drug_name' not in reminder_data or not reminder_data['drug_name']:
                     reminder_data['drug_name'] = existing_reminder['drug_name']
+                
+                # 更新現有提醒
+                return DB.update_reminder(reminder_id, reminder_data)
+            else:
+                return None  # 找不到要編輯的提醒
         elif member_id:
+            # 新增模式：創建新提醒
             member_info = DB.get_member_by_id(member_id)
             if member_info:
                 reminder_data['member'] = member_info['member']
@@ -40,40 +48,65 @@ class ReminderService:
         if 'member' not in reminder_data:
             return None
         
+        # 新增提醒
         return DB.create_reminder(reminder_data)
 
     @staticmethod
-    def create_reminder_from_voice(user_id: str, drug_name: str, timings: list, frequency: str, dosage: str, method: str):
+    def create_reminder_from_voice(user_id: str, drug_name: str, timings: list, frequency: str, dosage: str, method: str, target_member: str = '本人'):
         """處理來自語音的用藥提醒"""
-        # 1. 確保「本人」成員存在
-        member = DB.get_self_member(user_id)
-        if not member:
-            from .user_service import UserService
-            UserService.get_or_create_user(user_id)
-            member = DB.get_self_member(user_id)
-            if not member:
-                return None # 如果還是找不到，則放棄
+        # 1. 確保目標成員存在
+        from .user_service import UserService
+        
+        # 獲取用戶的所有成員
+        members = UserService.get_user_members(user_id)
+        target_member_data = None
+        
+        # 尋找目標成員
+        for member in members:
+            if member['member'] == target_member:
+                target_member_data = member
+                break
+        
+        if not target_member_data:
+            # 如果找不到目標成員，且目標是本人，則自動創建
+            if target_member == '本人':
+                UserService.get_or_create_user(user_id)
+                # 重新獲取成員列表
+                members = UserService.get_user_members(user_id)
+                target_member_data = next((m for m in members if m['member'] == '本人'), None)
+            
+            if not target_member_data:
+                current_app.logger.error(f"找不到目標成員「{target_member}」，用戶: {user_id}")
+                return None
+
+        current_app.logger.info(f"[DEBUG] 為成員「{target_member}」建立提醒")
 
         # 2. 轉換為資料庫格式
         time_slots = {}
         if timings:
+            current_app.logger.info(f"[DEBUG] 處理時間列表: {timings}")
             for i, time_str in enumerate(timings):
                 if i < 5:  # 最多5個時間槽
                     # 轉換時間格式為 HH:MM:SS
                     converted_time = ReminderService._convert_time_to_db_format(time_str)
+                    current_app.logger.info(f"[DEBUG] 時間槽 {i+1}: {time_str} -> {converted_time}")
                     if converted_time:
                         time_slots[f"time_slot_{i+1}"] = converted_time
+        
+        current_app.logger.info(f"[DEBUG] 最終時間槽: {time_slots}")
 
         reminder_data = {
             'recorder_id': user_id,
-            'member': '本人',
+            'member': target_member,  # 使用實際的目標成員
             'drug_name': drug_name,
-            'dose_quantity': dosage,
-            'notes': f"由語音建立",
-            'frequency_name': frequency,
+            'dose_quantity': dosage,  # 使用傳入的劑量
+            'notes': f"由語音建立: {method}" if method else "由語音建立",
+            'frequency_name': frequency,  # 使用傳入的頻率
             'frequency_timing_code': method,
             **time_slots
         }
+        
+        current_app.logger.info(f"[DEBUG] 建立提醒資料: {reminder_data}")
 
         # 3. 建立提醒
         return DB.create_reminder(reminder_data)

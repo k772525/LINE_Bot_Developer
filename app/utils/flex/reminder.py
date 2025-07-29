@@ -9,8 +9,11 @@ from urllib.parse import quote
 from flask import current_app
 
 def create_reminder_management_menu():
-    """【樣式復刻】產生用藥提醒管理的專業選單。"""
-    bubble = BubbleContainer(
+    """【樣式復刻】產生用藥提醒管理的專業選單 - 包含語音快捷鍵說明輪播。"""
+    bubbles = []
+    
+    # 第一個卡片：用藥提醒管理
+    management_bubble = BubbleContainer(
         header=BoxComponent(
             layout='vertical',
             contents=[
@@ -82,7 +85,89 @@ def create_reminder_management_menu():
             ]
         )
     )
-    return FlexSendMessage(alt_text="用藥提醒管理選單", contents=bubble)
+    
+    # 第二個卡片：語音快捷鍵說明
+    voice_guide_bubble = BubbleContainer(
+        header=BoxComponent(
+            layout='vertical',
+            contents=[
+                TextComponent(text='🎤 語音快捷鍵說明', weight='bold', size='lg', color='#1F2D3D', align='center')
+            ],
+            background_color='#FFE4B5',
+            padding_all='16px'
+        ),
+        body=BoxComponent(
+            layout='vertical',
+            padding_all='18px',
+            spacing='md',
+            contents=[
+                # 語音用藥提醒設定
+                BoxComponent(
+                    layout='vertical',
+                    background_color='#FFF3E0',
+                    corner_radius='12px',
+                    padding_all='12px',
+                    margin='sm',
+                    contents=[
+                        TextComponent(text='💊 語音用藥提醒設定', weight='bold', size='md', color='#E65100'),
+                        TextComponent(text='語音輸入範例：', size='sm', color='#BF360C', margin='xs'),
+                        TextComponent(text='"新增用藥提醒，普拿疼，飯後吃，每次一顆"', size='xs', color='#424242', wrap=True, margin='xs'),
+                        TextComponent(text='"提醒我每天早上八點吃一顆血壓藥"', size='xs', color='#424242', wrap=True, margin='xs')
+                    ]
+                ),
+                
+                # 語音新增家人
+                BoxComponent(
+                    layout='vertical',
+                    background_color='#E8F5E8',
+                    corner_radius='12px',
+                    padding_all='12px',
+                    margin='sm',
+                    contents=[
+                        TextComponent(text='👨‍👩‍👧‍👦 語音新增家人', weight='bold', size='md', color='#2E7D32'),
+                        TextComponent(text='語音輸入範例：', size='sm', color='#1B5E20', margin='xs'),
+                        TextComponent(text='"新增提醒對象媽媽"', size='xs', color='#424242', wrap=True, margin='xs'),
+                        TextComponent(text='"新增家人爸爸"', size='xs', color='#424242', wrap=True, margin='xs')
+                    ]
+                ),
+                
+                # 語音查詢功能
+                BoxComponent(
+                    layout='vertical',
+                    background_color='#E3F2FD',
+                    corner_radius='12px',
+                    padding_all='12px',
+                    margin='sm',
+                    contents=[
+                        TextComponent(text='🔍 語音查詢功能', weight='bold', size='md', color='#1565C0'),
+                        TextComponent(text='語音輸入範例：', size='sm', color='#0D47A1', margin='xs'),
+                        TextComponent(text='"查詢本人的用藥提醒"', size='xs', color='#424242', wrap=True, margin='xs'),
+                        TextComponent(text='"查詢家人的用藥提醒"', size='xs', color='#424242', wrap=True, margin='xs')
+                    ]
+                ),
+                
+                # 使用提示
+                BoxComponent(
+                    layout='vertical',
+                    background_color='#F3E5F5',
+                    corner_radius='12px',
+                    padding_all='12px',
+                    margin='sm',
+                    contents=[
+                        TextComponent(text='💡 使用提示', weight='bold', size='sm', color='#6A1B9A'),
+                        TextComponent(text='• 直接對著手機說話即可', size='xs', color='#424242', margin='xs'),
+                        TextComponent(text='• 說話清楚，語速適中', size='xs', color='#424242'),
+                        TextComponent(text='• 支援中文語音識別', size='xs', color='#424242')
+                    ]
+                )
+            ]
+        )
+    )
+    
+    bubbles.append(management_bubble)
+    bubbles.append(voice_guide_bubble)
+    
+    return FlexSendMessage(alt_text="用藥提醒管理與語音快捷鍵", contents=CarouselContainer(contents=bubbles))
 
 def create_member_management_carousel(members_summary: list, liff_manual_reminder_id: str):
     """

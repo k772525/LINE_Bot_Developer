@@ -36,7 +36,8 @@ class Config:
 
     # --- Google Speech-to-Text API 設定 ---
     # Google Speech-to-Text 使用相同的服務帳戶憑證
-    GOOGLE_APPLICATION_CREDENTIALS ='cji25.json'
+    # Cloud Run 環境會自動處理認證，不需要指定檔案路徑
+    GOOGLE_APPLICATION_CREDENTIALS = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
     SPEECH_TO_TEXT_ENABLED = os.environ.get('SPEECH_TO_TEXT_ENABLED', 'true').lower() == 'true'
     SPEECH_LANGUAGE_CODE = os.environ.get('SPEECH_LANGUAGE_CODE', 'zh-TW')
     

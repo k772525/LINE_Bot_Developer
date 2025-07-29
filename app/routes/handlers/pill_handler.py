@@ -35,11 +35,11 @@ user_states = {}
 AVAILABLE_MODELS = {
     "1": {
         "name": "yolov12",
-        "url": "https://yolo120724-712800774423.us-central1.run.app"
+        "url": "https://fastapi-yolo12-new-279529698884.us-central1.run.app"
     },
     "2": {
         "name": "yolov11", 
-        "url": "https://yolo110724-712800774423.us-central1.run.app"
+        "url": "https://fastapi-yolo11-279529698884.us-central1.run.app"
     }
 }
 

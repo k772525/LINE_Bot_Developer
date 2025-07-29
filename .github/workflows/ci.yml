@@ -1,0 +1,108 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpassword
+          MYSQL_DATABASE: pill_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov flake8
+    
+    - name: Lint with flake8
+      run: |
+        # stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    
+    - name: Create test environment file
+      run: |
+        cat > .env << EOF
+        LINE_CHANNEL_ACCESS_TOKEN=test_token
+        LINE_CHANNEL_SECRET=test_secret
+        YOUR_BOT_ID=@test_bot
+        LIFF_CHANNEL_ID=test_liff_channel
+        LIFF_ID_CAMERA=test_camera_liff
+        LIFF_ID_EDIT=test_edit_liff
+        LIFF_ID_PRESCRIPTION_REMINDER=test_prescription_liff
+        LIFF_ID_MANUAL_REMINDER=test_manual_liff
+        LIFF_ID_HEALTH_FORM=test_health_liff
+        LINE_LOGIN_CHANNEL_ID=test_login_channel
+        LINE_LOGIN_CHANNEL_SECRET=test_login_secret
+        SECRET_KEY=test-secret-key
+        GEMINI_API_KEY=test_gemini_key
+        DB_HOST=127.0.0.1
+        DB_USER=root
+        DB_PASS=rootpassword
+        DB_NAME=pill_test
+        DB_PORT=3306
+        REMINDER_SECRET_TOKEN=test-reminder-token
+        EOF
+    
+    - name: Wait for MySQL
+      run: |
+        while ! mysqladmin ping -h"127.0.0.1" -P"3306" -u"root" -p"rootpassword" --silent; do
+          sleep 1
+        done
+    
+    - name: Test with pytest
+      run: |
+        pytest --cov=app --cov-report=xml --cov-report=html
+      continue-on-error: true
+    
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'

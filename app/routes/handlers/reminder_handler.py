@@ -320,20 +320,32 @@ def rename_member(user_id, member_id, new_name, reply_token):
     try:
         UserService.delete_user_simple_state(user_id)
         
-        # 檢查新名稱是否已存在
+        # 根據 member_id 獲取現有成員資訊
         existing_members = UserService.get_user_members(user_id)
+        target_member = None
+        for member in existing_members:
+            if str(member.get('id')) == str(member_id):
+                target_member = member
+                break
+        
+        if not target_member:
+            _reply_message(reply_token, TextSendMessage(text="❌ 找不到要修改的成員。"))
+            return
+        
+        old_name = target_member['member']
+        
+        # 檢查新名稱是否已存在
         if any(m['member'] == new_name for m in existing_members):
             _reply_message(reply_token, TextSendMessage(text=f"「{new_name}」已經存在，請使用其他名稱。"))
             return
         
-        # 重新命名
-        success = reminder_service.ReminderService.rename_member_profile(member_id, new_name, user_id)
-        
-        if success:
-            _reply_message(reply_token, TextSendMessage(text=f"✅ 已成功將名稱修改為「{new_name}」！"))
-        else:
-            _reply_message(reply_token, TextSendMessage(text="❌ 修改名稱失敗，請稍後再試。"))
+        # 使用 UserService.rename_member 重新命名
+        UserService.rename_member(user_id, old_name, new_name)
+        _reply_message(reply_token, TextSendMessage(text=f"✅ 已成功將「{old_name}」修改為「{new_name}」！"))
             
+    except ValueError as ve:
+        current_app.logger.error(f"重新命名成員錯誤: {ve}")
+        _reply_message(reply_token, TextSendMessage(text=f"❌ {str(ve)}"))
     except Exception as e:
         current_app.logger.error(f"重新命名成員錯誤: {e}")
         _reply_message(reply_token, TextSendMessage(text="修改名稱時發生錯誤，請稍後再試。"))
@@ -348,11 +360,12 @@ def handle_voice_reminder(user_id: str, parsed_data: dict):
         # 1. 準備提醒資料
         # 使用 get 方法並提供預設值，增加程式碼的穩健性
         drug_name = parsed_data.get('drug_name', '未指定藥物')
-        timings = parsed_data.get('timing') # timing 預期是個列表
-        frequency = parsed_data.get('frequency') or '每日一次'  # 修正：確保 None 值也使用預設值
-        dosage = parsed_data.get('dosage') or '1顆'  # 修正：確保 None 值也使用預設值
+        # 支援多種時間欄位格式
+        timings = parsed_data.get('time_slots') or parsed_data.get('timing') or []
+        frequency = parsed_data.get('frequency_name') or parsed_data.get('frequency') or '每日一次'
+        dosage = parsed_data.get('dose_quantity') or parsed_data.get('dosage') or '1顆'
         method = parsed_data.get('method')  # method 可以為 None
-        target_member = parsed_data.get('target_member', '本人')  # 新增目標成員
+        target_member = parsed_data.get('target_member') or parsed_data.get('member', '本人')
 
         # 2. 獲取或創建目標成員
         from app.services.user_service import UserService
@@ -382,20 +395,28 @@ def handle_voice_reminder(user_id: str, parsed_data: dict):
 
         # 3. 轉換為資料庫格式
         # 處理時間槽
+        current_app.logger.info(f"[Voice Reminder] 處理時間槽，timings: {timings}")
         time_slots = {}
         if timings:
             for i, time_str in enumerate(timings):
                 if i < 5:  # 最多5個時間槽
+                    current_app.logger.info(f"[Voice Reminder] 轉換時間 {i+1}: {time_str}")
                     # 轉換時間格式為 HH:MM:SS
                     converted_time = reminder_service.ReminderService._convert_time_to_db_format(time_str)
                     if converted_time:
                         time_slots[f"time_slot_{i+1}"] = converted_time
+                        current_app.logger.info(f"[Voice Reminder] 成功轉換: time_slot_{i+1} = {converted_time}")
+                    else:
+                        current_app.logger.warning(f"[Voice Reminder] 時間轉換失敗: {time_str}")
         else:
             # 如果沒有指定時間，根據頻率設定預設時間
+            current_app.logger.info(f"[Voice Reminder] 沒有指定時間，使用頻率預設時間: {frequency}")
             default_times = _get_default_times_from_frequency(frequency)
             for i, default_time in enumerate(default_times):
                 if i < 5:
                     time_slots[f"time_slot_{i+1}"] = default_time
+        
+        current_app.logger.info(f"[Voice Reminder] 最終時間槽配置: {time_slots}")
 
         # 處理頻率編碼
         frequency_code = _convert_frequency_to_code(frequency)

@@ -87,10 +87,22 @@ class VoiceService:
                         "3. 或使用 pip: pip install ffmpeg-python"
                     )
                 
-                # 備用方法：直接嘗試將原始音頻發送給 Google Speech API
-                # 某些情況下，Google Speech API 可以直接處理 m4a 格式
-                current_app.logger.info("嘗試直接使用原始音頻格式")
-                return audio_bytes
+                # 備用方法：嘗試簡單的格式轉換
+                current_app.logger.info("嘗試使用備用音頻處理方法")
+                try:
+                    # 嘗試將 m4a 轉換為基本的 wav 格式
+                    audio = AudioSegment.from_file(BytesIO(audio_bytes))
+                    # 設置為 Google Speech API 推薦的格式
+                    audio = audio.set_channels(1).set_frame_rate(16000).set_sample_width(2)
+                    
+                    wav_buffer = BytesIO()
+                    audio.export(wav_buffer, format="wav")
+                    current_app.logger.info("備用方法轉換成功")
+                    return wav_buffer.getvalue()
+                except:
+                    # 如果所有轉換都失敗，返回原始音頻讓 API 嘗試處理
+                    current_app.logger.info("使用原始音頻格式")
+                    return audio_bytes
                 
         except CouldntDecodeError:
             current_app.logger.error("無法解碼音頻檔案")
@@ -124,22 +136,27 @@ class VoiceService:
                 'description': 'WAV/LINEAR16'
             })
         else:
-            # 非WAV格式，嘗試多種編碼
+            # 非WAV格式，嘗試多種編碼（按成功率排序）
             encoding_attempts = [
                 {
-                    'encoding': speech.RecognitionConfig.AudioEncoding.MP3,
+                    'encoding': speech.RecognitionConfig.AudioEncoding.LINEAR16,
+                    'sample_rate_hertz': 16000,
+                    'description': 'LINEAR16_16K'
+                },
+                {
+                    'encoding': speech.RecognitionConfig.AudioEncoding.FLAC,
+                    'sample_rate_hertz': 16000,
+                    'description': 'FLAC'
+                },
+                {
+                    'encoding': speech.RecognitionConfig.AudioEncoding.ENCODING_UNSPECIFIED,
                     'sample_rate_hertz': None,
-                    'description': 'MP3'
+                    'description': 'AUTO_DETECT'
                 },
                 {
                     'encoding': speech.RecognitionConfig.AudioEncoding.WEBM_OPUS,
-                    'sample_rate_hertz': 48000,  # 設定標準採樣率
+                    'sample_rate_hertz': 48000,
                     'description': 'WEBM_OPUS'
-                },
-                {
-                    'encoding': speech.RecognitionConfig.AudioEncoding.OGG_OPUS,
-                    'sample_rate_hertz': 48000,  # 設定標準採樣率
-                    'description': 'OGG_OPUS'
                 }
             ]
         

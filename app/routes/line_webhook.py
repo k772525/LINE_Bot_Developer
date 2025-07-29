@@ -46,7 +46,10 @@ def callback():
 
 @handler.add(MessageEvent, message=(TextMessage, ImageMessage, AudioMessage))
 def handle_message_dispatcher(event):
+    """處理文字訊息的分發器"""
     user_id = event.source.user_id
+    
+    # 確保用戶存在
     UserService.get_or_create_user(user_id)
     
     complex_state = UserService.get_user_complex_state(user_id)
@@ -123,8 +126,90 @@ def handle_message_dispatcher(event):
                 if target_member:
                     # 已指定成員，直接創建提醒
                     parsed_data['target_member'] = target_member
-                    from app.routes.handlers import reminder_handler
-                    reminder_handler.handle_voice_reminder(user_id, parsed_data)
+                    
+                    # 直接使用 ReminderService.create_reminder_from_voice 創建提醒
+                    from app.services.reminder_service import ReminderService
+                    
+                    # 提取語音解析的資料
+                    drug_name = parsed_data.get('drug_name', '')
+                    dose_quantity = parsed_data.get('dose_quantity', '')
+                    frequency_name = parsed_data.get('frequency_name', '')
+                    time_slots = parsed_data.get('time_slots', [])  # 這是關鍵！
+                    notes = parsed_data.get('notes')
+                    
+                    current_app.logger.info(f"語音提醒資料: drug_name={drug_name}, time_slots={time_slots}, frequency={frequency_name}, dose={dose_quantity}")
+                    
+                    # 創建提醒
+                    reminder_id = ReminderService.create_reminder_from_voice(
+                        user_id=user_id,
+                        drug_name=drug_name,
+                        timings=time_slots,  # 直接傳遞時間列表
+                        frequency=frequency_name,  # 保持原始頻率
+                        dosage=dose_quantity,      # 保持原始劑量
+                        method=notes or "語音輸入",  # 改為更簡潔的備註
+                        target_member=target_member  # 傳入正確的目標成員
+                    )
+                    
+                    if reminder_id:
+                        # 創建成功，直接顯示提醒卡片
+                        current_app.logger.info(f"語音提醒處理成功，ID: {reminder_id}")
+                        
+                        # 發送立即的成功訊息（可能是新增或更新）
+                        immediate_success_msg = f"✅ 語音用藥提醒設定成功！\n\n👤 對象：{target_member}\n💊 藥物：{drug_name}\n⏰ 時間：{', '.join(time_slots) if time_slots else '預設時間'}\n📅 頻率：{frequency_name}\n\n🔄 正在為您顯示提醒列表..."
+                        line_bot_api.push_message(user_id, TextSendMessage(text=immediate_success_msg))
+                        
+                        # 稍微延遲後顯示卡片，確保資料庫事務完成
+                        import time
+                        time.sleep(0.5)
+                        
+                        try:
+                            from app.utils.flex import reminder as flex_reminder
+                            
+                            # 確保用戶資料存在
+                            UserService.get_or_create_user(user_id)
+                            members = UserService.get_user_members(user_id)
+                            target_member_data = next((m for m in members if m['member'] == target_member), None)
+                            
+                            current_app.logger.info(f"🔍 找到目標成員: {target_member_data}")
+                            
+                            if target_member_data:
+                                # 獲取目標成員的所有提醒（包括剛建立/更新的）
+                                reminders = ReminderService.get_reminders_for_member(user_id, target_member)
+                                current_app.logger.info(f"🔍 獲取到 {len(reminders) if reminders else 0} 筆提醒")
+                                
+                                # 確保 LIFF ID 存在
+                                liff_id = current_app.config.get('LIFF_ID_MANUAL_REMINDER')
+                                current_app.logger.info(f"🔍 LIFF ID: {liff_id}")
+                                
+                                # 強制創建提醒卡片
+                                if liff_id and reminders:
+                                    try:
+                                        flex_message = flex_reminder.create_reminder_list_carousel(target_member_data, reminders, liff_id)
+                                        line_bot_api.push_message(user_id, flex_message)
+                                        current_app.logger.info(f"✅ 語音設定提醒成功 - 已顯示「{target_member}」的提醒卡片")
+                                        return  # 成功顯示卡片，直接返回
+                                    except Exception as carousel_error:
+                                        current_app.logger.error(f"❌ 創建提醒卡片失敗: {carousel_error}")
+                                        import traceback
+                                        current_app.logger.error(f"詳細錯誤: {traceback.format_exc()}")
+                                elif not reminders:
+                                    current_app.logger.warning(f"⚠️ 無法取得用戶 {user_id} 成員「{target_member}」的提醒列表")
+                                else:
+                                    current_app.logger.error("❌ 無法取得 LIFF_ID_MANUAL_REMINDER 配置")
+                            else:
+                                current_app.logger.error(f"❌ 無法找到目標成員「{target_member}」資料")
+                                
+                        except Exception as e:
+                            current_app.logger.error(f"❌ 處理語音提醒結果失敗: {e}")
+                            import traceback
+                            current_app.logger.error(f"錯誤詳情: {traceback.format_exc()}")
+                            
+                        # 如果執行到這裡，表示卡片顯示失敗，發送說明訊息
+                        fallback_msg = f"💡 您為「{target_member}」設定的「{drug_name}」提醒已完成。\n\n請點選「用藥提醒」→「新增/查詢提醒」→「{target_member}」查看所有提醒。"
+                        line_bot_api.push_message(user_id, TextSendMessage(text=fallback_msg))
+                    else:
+                        current_app.logger.error("❌ 語音提醒設定失敗，reminder_id 為 None")
+                        line_bot_api.push_message(user_id, TextSendMessage(text="❌ 設定提醒失敗，請稍後再試或使用選單功能手動新增。"))
                 else:
                     # 未指定成員，顯示成員選擇選單
                     _show_member_selection_for_voice_reminder(user_id, parsed_data, line_bot_api)
@@ -139,42 +224,66 @@ def handle_message_dispatcher(event):
                 
                 # 處理不同類型的語音選單指令
                 if menu_command == 'query_self_reminders':
-                    # 查詢本人提醒 - 直接調用 postback 處理邏輯
-                    from urllib.parse import parse_qs
-                    
-                    # 模擬 postback event
-                    class MockEvent:
-                        def __init__(self, user_id):
-                            self.source = type('obj', (object,), {'user_id': user_id})
-                            self.reply_token = None  # 語音指令使用 push_message
-                    
-                    mock_event = MockEvent(user_id)
-                    
-                    # 直接調用 view_existing_reminders 的處理邏輯
+                    # 查詢本人提醒 - 語音指令處理
                     try:
                         from app.utils.flex import reminder as flex_reminder
                         from app.services.reminder_service import ReminderService
                         
-                        # 獲取用戶的所有成員（包括本人）
+                        current_app.logger.info(f"開始處理語音查詢本人提醒 - 用戶: {user_id}")
+                        
+                        # 確保用戶存在
+                        UserService.get_or_create_user(user_id)
+                        
+                        # 獲取用戶的所有成員
                         members = UserService.get_user_members(user_id)
+                        current_app.logger.info(f"用戶成員列表: {[m['member'] for m in members]}")
+                        
                         # 找到本人的成員資料
                         target_member = next((m for m in members if m['member'] == '本人'), None)
                         
                         if target_member:
+                            current_app.logger.info(f"找到本人成員: {target_member}")
+                            
                             # 獲取本人的提醒列表
                             reminders = ReminderService.get_reminders_for_member(user_id, "本人")
-                            liff_id = current_app.config['LIFF_ID_MANUAL_REMINDER']
-                            flex_message = flex_reminder.create_reminder_list_carousel(target_member, reminders, liff_id)
+                            current_app.logger.info(f"本人提醒數量: {len(reminders) if reminders else 0}")
                             
-                            line_bot_api.push_message(user_id, flex_message)
-                            current_app.logger.info("語音觸發查詢本人提醒成功 - 顯示卡片")
+                            if reminders and len(reminders) > 0:
+                                # 有提醒記錄，顯示卡片
+                                liff_id = current_app.config.get('LIFF_ID_MANUAL_REMINDER')
+                                if liff_id:
+                                    flex_message = flex_reminder.create_reminder_list_carousel(target_member, reminders, liff_id)
+                                    line_bot_api.push_message(user_id, flex_message)
+                                    current_app.logger.info("語音觸發查詢本人提醒成功 - 顯示提醒卡片")
+                                else:
+                                    # LIFF ID 未配置，發送文字訊息
+                                    reminder_text = f"📋 您目前有 {len(reminders)} 筆用藥提醒：\n\n"
+                                    for i, reminder in enumerate(reminders[:5], 1):  # 最多顯示5筆
+                                        reminder_text += f"{i}. {reminder.get('drug_name', '未知藥物')} - {reminder.get('frequency_name', '未設定頻率')}\n"
+                                    if len(reminders) > 5:
+                                        reminder_text += f"\n...還有 {len(reminders) - 5} 筆提醒"
+                                    line_bot_api.push_message(user_id, TextSendMessage(text=reminder_text))
+                                    current_app.logger.info("語音觸發查詢本人提醒成功 - 顯示文字列表")
+                            else:
+                                # 沒有提醒記錄
+                                line_bot_api.push_message(user_id, TextSendMessage(
+                                    text="📋 您目前沒有設定任何用藥提醒。\n\n💡 您可以說「新增提醒」或使用「用藥提醒」選單來建立提醒。"
+                                ))
+                                current_app.logger.info("語音觸發查詢本人提醒成功 - 無提醒記錄")
                         else:
-                            # 如果找不到本人，發送錯誤訊息
-                            line_bot_api.push_message(user_id, TextSendMessage(text="❌ 找不到本人的資料，請先設定提醒對象"))
-                            current_app.logger.warning(f"找不到用戶 {user_id} 的本人資料")
+                            # 找不到本人成員，自動創建
+                            current_app.logger.warning(f"找不到用戶 {user_id} 的本人資料，嘗試創建")
+                            from app.utils.db import DB
+                            DB.add_member(user_id, "本人")
+                            line_bot_api.push_message(user_id, TextSendMessage(
+                                text="📋 已為您初始化個人資料。\n\n目前沒有用藥提醒，您可以說「新增提醒」來建立第一筆提醒。"
+                            ))
+                            current_app.logger.info("語音觸發查詢本人提醒 - 已創建本人成員")
                         
                     except Exception as e:
                         current_app.logger.error(f"語音查詢本人提醒失敗: {e}")
+                        import traceback
+                        current_app.logger.error(f"錯誤詳情: {traceback.format_exc()}")
                         line_bot_api.push_message(user_id, TextSendMessage(text="❌ 查詢提醒時發生錯誤，請稍後再試"))
                     
                     return
@@ -1606,20 +1715,25 @@ def handle_voice_menu_postback(event, action):
             current_app.logger.info("語音觸發藥歷查詢成功")
             
         elif action == 'view_existing_reminders':
-            # 查詢本人提醒 - 使用卡片顯示
+            # 查詢指定成員的提醒 - 使用卡片顯示
             try:
                 from app.utils.flex import reminder as flex_reminder
                 from app.services.reminder_service import ReminderService
                 from flask import current_app
+                from urllib.parse import parse_qs, unquote
                 
-                # 獲取用戶的所有成員（包括本人）
+                # 解析 member 參數
+                data = parse_qs(unquote(event.postback.data))
+                member_name = data.get('member', ['本人'])[0]  # 默認為本人
+                
+                # 獲取用戶的所有成員
                 members = UserService.get_user_members(user_id)
-                # 找到本人的成員資料
-                target_member = next((m for m in members if m['member'] == '本人'), None)
+                # 找到指定的成員資料
+                target_member = next((m for m in members if m['member'] == member_name), None)
                 
                 if target_member:
-                    # 獲取本人的提醒列表
-                    reminders = ReminderService.get_reminders_for_member(user_id, "本人")
+                    # 獲取指定成員的提醒列表
+                    reminders = ReminderService.get_reminders_for_member(user_id, member_name)
                     liff_id = current_app.config['LIFF_ID_MANUAL_REMINDER']
                     flex_message = flex_reminder.create_reminder_list_carousel(target_member, reminders, liff_id)
                     
@@ -1657,11 +1771,11 @@ def handle_voice_menu_postback(event, action):
                 
                 # 使用 push_message 發送訊息
                 line_bot_api.push_message(user_id, flex_message)
-                current_app.logger.info("語音觸發查詢家人提醒成功 - 顯示本人提醒列表")
+                current_app.logger.info(f"語音觸發查詢提醒成功 - 顯示「{member_name}」的提醒列表")
             else:
-                # 如果找不到本人，發送錯誤訊息
-                line_bot_api.push_message(user_id, TextSendMessage(text="❌ 找不到本人的資料，請先設定提醒對象"))
-                current_app.logger.warning(f"找不到用戶 {user_id} 的本人資料")
+                # 如果找不到指定成員，發送錯誤訊息
+                line_bot_api.push_message(user_id, TextSendMessage(text=f"❌ 找不到「{member_name}」的資料，請先設定提醒對象"))
+                current_app.logger.warning(f"找不到用戶 {user_id} 的「{member_name}」資料")
             
     except Exception as e:
         current_app.logger.error(f"語音選單 postback 處理錯誤 (action={action}): {e}")

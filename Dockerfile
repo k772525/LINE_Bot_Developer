@@ -11,8 +11,6 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     # 如果你使用 psycopg2-binary，則 libpq-dev 不是必需的
     libpq-dev \
-    # 語音處理所需的 ffmpeg 工具
-    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # 設定工作目錄
