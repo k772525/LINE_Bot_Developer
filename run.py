@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 
-# --- 核心修正 ---
+# --- 核心修正 --
 # 在匯入任何我們自己的模組 (特別是 config) 之前，
 # 就先執行 load_dotenv()。
 # 這會讀取根目錄下的 .env 檔案，並將其內容載入到 os.environ 中。
