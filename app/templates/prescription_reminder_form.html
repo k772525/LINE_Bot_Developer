@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>藥單用藥提醒設定</title>
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <style>
+        :root {
+            --primary-color: #8FD7E1; --secondary-color: #6c757d; --success-color: #d0f0c0;
+            --light-gray: #CBEEF3; --medium-gray: #e9ecef; --dark-gray: #343a40;
+            --text-color: #495057; --border-radius: 8px;
+        }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--light-gray); margin: 0; padding: 15px; color: var(--text-color); }
+        .container { max-width: 600px; margin: 0 auto; }
+        .header h1 { font-size: 1.5em; color: var(--dark-gray); text-align: center; }
+        .section { background-color: white; border-radius: var(--border-radius); box-shadow: 0 2px 10px rgba(0,0,0,0.08); margin-bottom: 20px; }
+        .section-header { padding: 15px 20px; border-bottom: 1px solid var(--medium-gray); font-weight: 600; font-size: 1.1em; }
+        .section-body { padding: 20px; }
+        .form-group { margin-bottom: 15px; }
+        .form-label { display: block; font-weight: 500; margin-bottom: 8px; font-size: 0.9em; }
+        .time-input-wrapper { display: flex; align-items: center; gap: 8px; }
+        .time-input { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 1em; }
+        .time-ampm-indicator { font-size: 0.8em; color: var(--secondary-color); font-weight: 600; min-width: 25px; }
+        .time-input-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+        .drug-list { margin-top: 10px; font-size: 0.85em; color: var(--secondary-color); }
+        .drug-card { border: 1px solid var(--medium-gray); border-radius: var(--border-radius); margin-bottom: 15px; }
+        .drug-card.is-collapsed .drug-card-body { display: none; }
+        .drug-card-header { display: flex; justify-content: space-between; align-items: center; padding: 15px; background-color: var(--light-gray); cursor: pointer; }
+        .drug-card-title { font-weight: 600; }
+        .toggle-icon { font-weight: bold; transition: transform 0.3s; }
+        .is-collapsed .toggle-icon { transform: rotate(-90deg); }
+        .drug-card-body { padding: 20px; border-top: 1px solid var(--medium-gray); }
+        .footer { position: sticky; bottom: 0; background-color: rgba(255,255,255,0.9); padding: 15px; box-shadow: 0 -2px 10px rgba(0,0,0,0.1); }
+        .btn { display: block; width: 100%; padding: 15px; border: none; border-radius: var(--border-radius); font-size: 1.1em; font-weight: bold; cursor: pointer; }
+        .btn-primary { 
+            background: #d0f0c0; 
+            color: #057033; 
+            border: 2px solid #d0f0c0;
+            font-weight: bold;
+            transition: all 0.3s ease;
+        }
+        .btn-primary:hover:not(:disabled) {
+            background: #c5e8b5;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(5, 112, 51, 0.3);
+        }
+        .btn:disabled { background-color: var(--medium-gray); cursor: not-allowed; }
+        .hidden { display: none; }
+        .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
+        .spinner { width: 50px; height: 50px; border: 5px solid #fff; border-top-color: var(--primary-color); border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+<div id="loading-overlay" class="overlay"><div class="spinner"></div></div>
+<div id="main-container" class="container hidden">
+    <div class="header"><h1 id="page-title">藥單用藥提醒設定</h1></div>
+    <div id="preset-section" class="section hidden">
+        <div class="section-header">通用設定 (依頻率)</div>
+        <div id="preset-container" class="section-body"></div>
+    </div>
+    <div id="details-section" class="section">
+        <div class="section-header">詳細設定</div>
+        <div id="medication-cards-container" class="section-body"></div>
+    </div>
+</div>
+<div class="footer"><button id="save-btn" class="btn btn-primary">儲存所有設定</button></div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const loadingOverlay = document.getElementById('loading-overlay');
+    const mainContainer = document.getElementById('main-container');
+    const pageTitle = document.getElementById('page-title');
+    const presetSection = document.getElementById('preset-section');
+    const presetContainer = document.getElementById('preset-container');
+    const detailsContainer = document.getElementById('medication-cards-container');
+    const saveBtn = document.getElementById('save-btn');
+
+    const pageState = {
+        liffId: '{{ liff_id | safe }}',
+        idToken: null,
+        mmId: null,
+        recorderId: null,
+        member: null
+    };
+    
+    function showLoading(visible) {
+        console.log('showLoading called with visible:', visible);
+        if (visible) {
+            loadingOverlay.classList.remove('hidden');
+            loadingOverlay.style.display = 'flex';
+        } else {
+            loadingOverlay.classList.add('hidden');
+            loadingOverlay.style.display = 'none';
+        }
+        saveBtn.disabled = visible;
+        console.log('loading overlay display:', loadingOverlay.style.display);
+        console.log('loading overlay classes:', loadingOverlay.className);
+    }
+
+    function updateAmPmIndicator(timeInput) {
+        const wrapper = timeInput.parentElement;
+        let indicator = wrapper.querySelector('.time-ampm-indicator');
+        if (!indicator) {
+            indicator = document.createElement('span');
+            indicator.className = 'time-ampm-indicator';
+            wrapper.appendChild(indicator);
+        }
+        if (timeInput.value) {
+            const [hour] = timeInput.value.split(':').map(Number);
+            indicator.textContent = hour < 12 ? 'AM' : 'PM';
+        } else {
+            indicator.textContent = '';
+        }
+    }
+
+    async function initializeApp() {
+        try {
+            await liff.init({ liffId: pageState.liffId });
+            if (!liff.isLoggedIn()) {
+                // 顯示登入提示
+                document.querySelector('.container').innerHTML = `
+                    <div style="text-align: center; padding: 40px 20px;">
+                        <p style="color: #333; font-size: 1.1em; font-weight: bold; margin-bottom: 8px;">需要登入 LINE 帳號</p>
+                        <p style="color: #666; font-size: 0.9em; margin-bottom: 16px;">正在導向 LINE 登入頁面...</p>
+                    </div>
+                `;
+                liff.login({ redirectUri: location.href });
+                return;
+            }
+
+            const [profile, urlParams] = await Promise.all([ liff.getProfile(), new URLSearchParams(window.location.search) ]);
+
+            pageState.idToken = liff.getIDToken();
+            pageState.recorderId = profile.userId;
+            pageState.mmId = urlParams.get('mm_id');
+
+            if (pageState.mmId) {
+                await loadPrescriptionData();
+            } else {
+                alert('錯誤：缺少藥歷ID (mm_id)，無法載入資料。');
+            }
+        } catch (error) {
+            console.error('初始化失敗:', error);
+            alert(`初始化失敗: ${error.message}`);
+        } finally {
+            console.log('=== 執行 finally 塊 ===');
+            showLoading(false);
+            mainContainer.classList.remove('hidden');
+            mainContainer.style.display = 'block';
+            console.log('=== 載入狀態已隱藏，主容器已顯示 ===');
+            console.log('main container display:', mainContainer.style.display);
+            console.log('main container classes:', mainContainer.className);
+        }
+    }
+
+    async function loadPrescriptionData() {
+        try {
+            console.log('=== 開始載入處方資料 ===');
+            console.log('mm_id:', pageState.mmId);
+            
+            const response = await fetch(`/api/prescription/${pageState.mmId}/medications`);
+            console.log('API響應狀態:', response.status);
+            console.log('API響應headers:', response.headers);
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('API錯誤響應:', errorText);
+                alert(`API請求失敗: ${response.status} - ${errorText}`);
+                throw new Error(`HTTP ${response.status}: ${errorText}`);
+            }
+            
+            const data = await response.json();
+            console.log('=== API返回的完整資料 ===');
+            console.log('data:', JSON.stringify(data, null, 2));
+            
+            if (!data) {
+                alert('API返回空數據');
+                throw new Error('API返回空數據');
+            }
+            
+            if (!data.member) {
+                alert('資料格式錯誤：缺少成員資訊');
+                throw new Error('資料格式錯誤：缺少成員資訊');
+            }
+            
+            console.log('=== 開始設定頁面狀態 ===');
+            pageState.member = data.member;
+            pageTitle.textContent = `為「${data.member}」設定提醒`;
+            
+            console.log('=== 開始渲染UI ===');
+            renderUI(data.presets, data.medications);
+            console.log('=== UI渲染完成 ===');
+            
+        } catch (error) {
+            console.error('=== 載入藥歷資料失敗 ===');
+            console.error('錯誤詳情:', error);
+            console.error('錯誤堆疊:', error.stack);
+            alert(`載入藥歷資料失敗: ${error.message}`);
+            // 不再重新拋出錯誤，讓 finally 塊能夠執行
+        }
+    }
+
+    // 根據頻率分組藥物
+    // 安全的頻率顯示函數，實施方案1B - 移到全域作用域
+    function getSafeFrequencyDisplay(med) {
+        try {
+            // 第1優先：frequency_name (如 "一日三次")
+            if (med.frequency_name && isValidFrequency(med.frequency_name)) {
+                return med.frequency_name;
+            }
+            
+            // 第2優先：frequency_code 翻譯
+            if (med.frequency_code && isValidFrequency(med.frequency_code)) {
+                const translated = translateFrequencyCode(med.frequency_code);
+                if (translated) return translated;
+            }
+            
+            // 第3優先：frequency_text
+            if (med.frequency_text && isValidFrequency(med.frequency_text)) {
+                return med.frequency_text;
+            }
+            
+            // 最後回退：預設值
+            return "頻率請諮詢醫師";
+            
+        } catch (error) {
+            console.error('頻率顯示錯誤:', error);
+            return "頻率請諮詢醫師";
+        }
+    }
+    
+    function isValidFrequency(freq) {
+        if (!freq) return false;
+        const freqStr = String(freq).trim().toLowerCase();
+        const invalidPatterns = ['null', 'none', 'n/a', 'undefined', ''];
+        return !invalidPatterns.includes(freqStr);
+    }
+    
+    function translateFrequencyCode(code) {
+        const codeMap = {
+            'QD': '一日一次',
+            'BID': '一日兩次', 
+            'TID': '一日三次',
+            'QID': '一日四次',
+            'PRN': '需要時使用',
+            'HS': '睡前服用',
+            'AC': '飯前服用',
+            'PC': '飯後服用'
+        };
+        return codeMap[code?.toUpperCase()] || null;
+    }
+
+    function groupMedicationsByFrequency(medications) {
+        const groups = {};
+        medications.forEach(med => {
+            const frequencyText = getSafeFrequencyDisplay(med);
+            const timesPerDay = getTimesPerDayFromFrequency(med.frequency_count_code);
+            const key = `${frequencyText} (${timesPerDay}次)`;
+            
+            if (!groups[key]) {
+                groups[key] = {
+                    drugs: [],
+                    times_per_day: timesPerDay,
+                    frequency_code: med.frequency_count_code
+                };
+            }
+            groups[key].drugs.push(med.drug_name_zh || med.drug_name_en);
+            med.preset_key = key;
+            med.times_per_day = timesPerDay;
+        });
+        return groups;
+    }
+    
+    // 根據頻率代碼獲取每日次數
+    function getTimesPerDayFromFrequency(frequencyCode) {
+        const frequencyMap = {
+            'QD': 1, 'OD': 1, 'HS': 1,
+            'BID': 2, 'Q12H': 2,
+            'TID': 3, 'Q8H': 3,
+            'QID': 4, 'Q6H': 4,
+            'Q4H': 6,
+            'PRN': 1
+        };
+        return frequencyMap[frequencyCode] || 3;
+    }
+
+    function renderUI(presets, medications) {
+        try {
+            console.log('=== renderUI 開始 ===');
+            console.log('medications:', medications);
+            
+            // 確保 medications 是陣列
+            if (!Array.isArray(medications)) {
+                console.error('medications 不是陣列:', medications);
+                medications = [];
+            }
+            
+            // 過濾掉空的藥物對象
+            const validMedications = medications.filter(med => 
+                med && (med.drug_name_zh || med.drug_name_en)
+            );
+            
+            console.log('有效的藥物數量:', validMedications.length);
+            
+            if (validMedications.length === 0) {
+                console.log('沒有有效藥物，顯示提示訊息');
+                detailsContainer.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">此藥歷沒有可設定提醒的藥物資料</p>';
+            } else {
+                // 根據頻率分組藥物
+                const frequencyGroups = groupMedicationsByFrequency(validMedications);
+                
+                // 顯示頻率分組的通用設定
+                if (Object.keys(frequencyGroups).length > 0) {
+                    console.log('顯示頻率分組設定');
+                    presetSection.classList.remove('hidden');
+                    Object.entries(frequencyGroups).forEach(([key, data]) => {
+                        presetContainer.appendChild(createPresetCard(key, data));
+                    });
+                }
+                
+                // 渲染詳細藥物卡片
+                console.log('開始渲染有效藥物');
+                validMedications.forEach((med, index) => {
+                    console.log(`渲染藥物 ${index + 1}:`, med);
+                    try {
+                        const card = createDetailMedicationCard(med);
+                        detailsContainer.appendChild(card);
+                        console.log(`藥物 ${index + 1} 渲染成功`);
+                    } catch (cardError) {
+                        console.error(`渲染藥物 ${index + 1} 失敗:`, cardError);
+                    }
+                });
+            }
+            
+            console.log('開始設定事件監聽器');
+            setupEventListeners();
+            console.log('=== renderUI 完成 ===');
+            
+        } catch (error) {
+            console.error('=== renderUI 發生錯誤 ===');
+            console.error('錯誤詳情:', error);
+            console.error('錯誤堆疊:', error.stack);
+            alert(`渲染UI時發生錯誤: ${error.message}`);
+        }
+    }
+
+    function createPresetCard(key, data) {
+        const card = document.createElement('div');
+        card.className = 'form-group';
+        card.dataset.presetKey = key;
+        card.innerHTML = `
+            <label class="form-label">${key}</label>
+            <p class="drug-list">包含: ${data.drugs.join(', ')}</p>
+            <p class="frequency-warning" style="font-size: 0.75em; color: #666; margin-top: 5px;">⚠️ 請以醫師處方為準，如有疑問請諮詢醫師</p>
+        `;
+        const timeGrid = document.createElement('div');
+        timeGrid.className = 'time-input-grid';
+        for (let i = 1; i <= data.times_per_day; i++) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'time-input-wrapper';
+            const timeInput = document.createElement('input');
+            timeInput.type = 'time';
+            timeInput.className = 'time-input preset-time-input';
+            timeInput.dataset.timeIndex = i;
+            wrapper.appendChild(timeInput);
+            timeGrid.appendChild(wrapper);
+        }
+        card.appendChild(timeGrid);
+        return card;
+    }
+
+    function createDetailMedicationCard(med) {
+        const card = document.createElement('div');
+        card.className = 'drug-card is-collapsed';
+        
+        // 安全地獲取藥物名稱
+        const drugName = med.drug_name_zh || med.drug_name_en || '未知藥物';
+        const timesPerDay = med.times_per_day || 3; // 默認一天3次
+        const doseQuantity = med.dose_quantity || '未設定';
+        
+        card.dataset.drugName = drugName;
+        card.dataset.presetKey = med.preset_key || '';
+        
+        const timeInputsHtml = Array.from({ length: timesPerDay }, (_, i) => `
+            <div class="time-input-wrapper"><input type="time" class="time-input detail-time-input" data-time-index="${i + 1}"></div>`).join('');
+            
+        card.innerHTML = `
+            <div class="drug-card-header">
+                <span class="drug-card-title">${drugName}</span>
+                <span class="toggle-icon">▼</span>
+            </div>
+            <div class="drug-card-body">
+                <div class="form-group">
+                    <label class="form-label">劑量</label>
+                    <input type="text" class="form-input dose-quantity-input" value="${doseQuantity}" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">建議頻率：${getSafeFrequencyDisplay(med)}</label>
+                    <p style="font-size: 0.75em; color: #666; margin: 5px 0;">⚠️ 請以醫師處方為準，如有疑問請諮詢醫師</p>
+                    <label class="form-label">服用時間</label>
+                    <div class="time-input-grid">${timeInputsHtml}</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">備註</label>
+                    <textarea class="form-input notes-input" placeholder="可選填，例如：飯後服用"></textarea>
+                </div>
+            </div>`;
+        return card;
+    }
+    
+    function setupEventListeners() {
+        document.querySelectorAll('.drug-card-header').forEach(header => header.addEventListener('click', () => header.parentElement.classList.toggle('is-collapsed')));
+        document.querySelectorAll('.preset-time-input').forEach(input => {
+            input.addEventListener('change', (e) => {
+                const presetKey = e.target.closest('.form-group').dataset.presetKey;
+                const timeIndex = e.target.dataset.timeIndex;
+                const timeValue = e.target.value;
+                document.querySelectorAll(`.drug-card[data-preset-key="${presetKey}"] .detail-time-input[data-time-index="${timeIndex}"]`).forEach(detailInput => {
+                    detailInput.value = timeValue;
+                    updateAmPmIndicator(detailInput);
+                });
+                updateAmPmIndicator(e.target);
+            });
+        });
+        detailsContainer.addEventListener('change', (e) => { if (e.target.classList.contains('detail-time-input')) { updateAmPmIndicator(e.target); } });
+        saveBtn.addEventListener('click', handleSave);
+    }
+
+    async function handleSave() {
+        const reminders = [];
+        document.querySelectorAll('.drug-card').forEach(card => {
+            const timeInputs = card.querySelectorAll('.detail-time-input');
+            const times = Array.from(timeInputs).map(input => input.value).filter(Boolean);
+            if (times.length > 0) {
+                const reminder = {
+                    recorder_id: pageState.recorderId, member: pageState.member,
+                    drug_name: card.dataset.drugName,
+                    dose_quantity: card.querySelector('.dose-quantity-input').value,
+                    notes: card.querySelector('.notes-input').value,
+                };
+                times.forEach((time, i) => { if (i < 5) reminder[`time_slot_${i + 1}`] = time; });
+                reminders.push(reminder);
+            }
+        });
+        
+        if (reminders.length === 0) { alert("沒有任何已設定時間的提醒可供儲存。"); return; }
+        showLoading(true);
+        try {
+            // API路由已在 liff_views.py 中定義
+            const response = await fetch('/api/reminders/batch_create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${pageState.idToken}` },
+                body: JSON.stringify({ reminders: reminders }) 
+            });
+            const result = await response.json();
+            if (!response.ok || !result.success) throw new Error(result.message || '儲存失敗');
+            
+            // 發送 LIFF 訊息確認並關閉視窗
+            if (liff.isInClient()) {
+                await liff.sendMessages([{
+                    type: 'text',
+                    text: '✅ 用藥提醒已設定完成！系統將按照您設定的時間發送提醒。'
+                }]);
+                liff.closeWindow();
+            } else {
+                // 如果不在 LINE 客戶端中，顯示簡單確認
+                document.body.innerHTML = '<div style="text-align:center;padding:50px;"><h2>✅ 用藥提醒已設定完成</h2><p>請返回 LINE 查看確認訊息</p></div>';
+            }
+        } catch (error) {
+            console.error('儲存提醒失敗:', error);
+            alert(`儲存提醒失敗: ${error.message}`);
+        } finally {
+            showLoading(false);
+        }
+    }
+    
+    initializeApp();
+});
+</script>
+</body>
+</html>

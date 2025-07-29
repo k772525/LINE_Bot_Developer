@@ -1,0 +1,1837 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>健康紀錄</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <style>
+        /* 應用程式的自訂樣式 */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        body {
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            margin: 0;
+            padding: 0;
+        }
+
+        .app-container {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            min-height: 100vh;
+            width: 100%;
+        }
+
+        .dashboard-card {
+            background: linear-gradient(145deg, #ffffff, #f8fafc);
+            border-radius: 20px;
+            padding: 1.5rem;
+            box-shadow: 
+                0 10px 25px -5px rgba(0, 0, 0, 0.1),
+                0 4px 6px -2px rgba(0, 0, 0, 0.05),
+                inset 0 1px 0 rgba(255, 255, 255, 0.6);
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .dashboard-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            transform: scaleX(0);
+            transition: transform 0.3s ease;
+        }
+
+        .dashboard-card:hover::before {
+            transform: scaleX(1);
+        }
+
+        .dashboard-card:hover {
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 
+                0 20px 40px -8px rgba(0, 0, 0, 0.15),
+                0 8px 16px -4px rgba(0, 0, 0, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.8);
+        }
+
+        .icon {
+            font-size: 2rem;
+            filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
+            transition: transform 0.3s ease;
+        }
+
+        .dashboard-card:hover .icon {
+            transform: scale(1.1) rotate(5deg);
+        }
+
+        /* 動畫 emoji 效果 */
+        .animated-emoji {
+            display: inline-block;
+            animation: bounce 2s infinite;
+        }
+
+        .pulse-emoji {
+            display: inline-block;
+            animation: pulse 2s infinite;
+        }
+
+        .float-emoji {
+            display: inline-block;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        .heartbeat-emoji {
+            display: inline-block;
+            animation: heartbeat 1.5s ease-in-out infinite;
+        }
+
+        @keyframes bounce {
+            0%, 20%, 50%, 80%, 100% {
+                transform: translateY(0);
+            }
+            40% {
+                transform: translateY(-10px);
+            }
+            60% {
+                transform: translateY(-5px);
+            }
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.1);
+            }
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        @keyframes float {
+            0% {
+                transform: translateY(0px);
+            }
+            50% {
+                transform: translateY(-8px);
+            }
+            100% {
+                transform: translateY(0px);
+            }
+        }
+
+        @keyframes heartbeat {
+            0% {
+                transform: scale(1);
+            }
+            14% {
+                transform: scale(1.2);
+            }
+            28% {
+                transform: scale(1);
+            }
+            42% {
+                transform: scale(1.2);
+            }
+            70% {
+                transform: scale(1);
+            }
+        }
+
+        /* 圖表容器美化 */
+        .chart-wrapper {
+            background: linear-gradient(135deg, rgba(255,255,255,0.9) 0%, rgba(248,250,252,0.9) 100%);
+            border-radius: 20px;
+            padding: 20px;
+            box-shadow: 
+                0 20px 40px -12px rgba(0, 0, 0, 0.15),
+                0 8px 16px -4px rgba(0, 0, 0, 0.1),
+                inset 0 2px 4px rgba(255, 255, 255, 0.8);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .chart-wrapper::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, 
+                rgba(102, 126, 234, 0.05) 0%, 
+                rgba(118, 75, 162, 0.05) 25%,
+                rgba(255, 107, 107, 0.05) 50%,
+                rgba(78, 205, 196, 0.05) 75%,
+                rgba(249, 168, 37, 0.05) 100%);
+            pointer-events: none;
+        }
+
+        .chart-canvas {
+            position: relative;
+            z-index: 1;
+            border-radius: 15px;
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(10px);
+        }
+
+        /* 全屏圖表樣式 */
+        .chart-container-fullscreen {
+            background: linear-gradient(145deg, rgba(255,255,255,0.95), rgba(248,250,252,0.95));
+            border-radius: 24px;
+            padding: 30px;
+            box-shadow: 
+                0 25px 50px -12px rgba(0, 0, 0, 0.15),
+                0 10px 20px -5px rgba(0, 0, 0, 0.1),
+                inset 0 2px 4px rgba(255, 255, 255, 0.9);
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            position: relative;
+            overflow: hidden;
+            min-height: 500px;
+        }
+
+        .chart-wrapper-large {
+            background: linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(248,250,252,0.95) 100%);
+            border-radius: 20px;
+            padding: 25px;
+            box-shadow: 
+                0 15px 30px -8px rgba(0, 0, 0, 0.1),
+                0 6px 12px -3px rgba(0, 0, 0, 0.08),
+                inset 0 2px 4px rgba(255, 255, 255, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            position: relative;
+            overflow: hidden;
+            height: 450px;
+        }
+
+        .chart-wrapper-large::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, 
+                rgba(102, 126, 234, 0.03) 0%, 
+                rgba(118, 75, 162, 0.03) 25%,
+                rgba(255, 107, 107, 0.03) 50%,
+                rgba(78, 205, 196, 0.03) 75%,
+                rgba(249, 168, 37, 0.03) 100%);
+            pointer-events: none;
+        }
+
+        .chart-canvas-large {
+            position: relative;
+            z-index: 1;
+            border-radius: 15px;
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(15px);
+            width: 100% !important;
+            height: 400px !important;
+        }
+
+        /* 中等大小圖表樣式 - 優化版 */
+        .chart-wrapper-medium {
+            background: linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(248,250,252,0.95) 100%);
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 
+                0 8px 20px -6px rgba(0, 0, 0, 0.08),
+                0 4px 8px -2px rgba(0, 0, 0, 0.05),
+                inset 0 1px 2px rgba(255, 255, 255, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            position: relative;
+            overflow: hidden;
+            height: 320px;
+            margin-bottom: 16px;
+        }
+
+        .chart-wrapper-medium::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, 
+                rgba(102, 126, 234, 0.03) 0%, 
+                rgba(118, 75, 162, 0.03) 25%,
+                rgba(255, 107, 107, 0.03) 50%,
+                rgba(78, 205, 196, 0.03) 75%,
+                rgba(249, 168, 37, 0.03) 100%);
+            pointer-events: none;
+        }
+
+        .chart-canvas-medium {
+            position: relative;
+            z-index: 1;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(15px);
+            width: 100% !important;
+            height: 260px !important;
+            box-shadow: 0 4px 8px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        /* 分頁控制樣式優化 */
+        .pagination-container {
+            background: linear-gradient(135deg, rgba(255,255,255,0.9) 0%, rgba(248,250,252,0.9) 100%);
+            border-radius: 12px;
+            padding: 12px 16px;
+            box-shadow: 
+                0 4px 12px -3px rgba(0, 0, 0, 0.06),
+                0 2px 4px -1px rgba(0, 0, 0, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            margin-bottom: 16px;
+        }
+
+        .pagination-btn {
+            background: #f3f4f6;
+            color: #374151;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            padding: 6px 12px;
+            font-weight: 500;
+            font-size: 14px;
+            transition: all 0.2s ease;
+        }
+
+        .pagination-btn:hover:not(:disabled) {
+            background: #e5e7eb;
+            color: #111827;
+        }
+
+        .pagination-btn:disabled {
+            background: #f9fafb;
+            color: #9ca3af;
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+
+        .records-select {
+            background: white;
+            border: 2px solid rgba(102, 126, 234, 0.2);
+            border-radius: 10px;
+            padding: 8px 12px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .records-select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .modal {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            backdrop-filter: blur(8px);
+        }
+
+        .modal-content {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .glass-button {
+            background: linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.7));
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            transition: all 0.3s ease;
+        }
+
+        .glass-button:hover {
+            background: linear-gradient(145deg, rgba(255, 255, 255, 1), rgba(255, 255, 255, 0.9));
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+        }
+
+        .primary-button {
+            background: linear-gradient(145deg, #667eea, #764ba2);
+            border: none;
+            color: white;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .primary-button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .primary-button:hover::before {
+            left: 100%;
+        }
+
+        .primary-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+        }
+
+        .loading-spinner {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .fade-in {
+            animation: fadeIn 0.6s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .slide-up {
+            animation: slideUp 0.4s ease-out;
+        }
+
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .input-field {
+            background: rgba(255, 255, 255, 0.9);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+        }
+
+        .input-field:focus {
+            border-color: #667eea;
+            background: rgba(255, 255, 255, 1);
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .chart-container {
+            background: rgba(255, 255, 255, 0.9);
+            backdrop-filter: blur(20px);
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .table-row:hover {
+            background: rgba(102, 126, 234, 0.05);
+            transform: scale(1.01);
+            transition: all 0.2s ease;
+        }
+
+        .header-gradient {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .value-display {
+            background: linear-gradient(145deg, #f8fafc, #e2e8f0);
+            border-radius: 12px;
+            padding: 0.5rem;
+            margin-top: 0.5rem;
+            border: 1px solid rgba(255, 255, 255, 0.6);
+        }
+    </style>
+</head>
+
+<body class="min-h-screen">
+    <!-- 載入中指示器 -->
+    <div id="loading" class="flex flex-col justify-center items-center h-screen">
+        <div class="loading-spinner w-12 h-12 border-4 border-white border-t-transparent rounded-full mb-4"></div>
+        <p class="text-white text-lg font-medium">正在載入健康紀錄...</p>
+        <p class="text-white/70 text-sm mt-2">請稍候片刻</p>
+    </div>
+
+    <!-- 主應用程式容器 -->
+    <div id="app" class="hidden">
+        <div class="app-container p-6 fade-in">
+        <div id="dashboardView" class="slide-up">
+            <!-- 標題區域 -->
+            <div class="text-center mb-8">
+                <h1 class="text-3xl font-bold text-gray-800 mb-2"><span class="pulse-emoji">🏥</span> 健康紀錄 <span class="heartbeat-emoji">💖</span></h1>
+                <p class="text-gray-600">追蹤您和家人的健康數據</p>
+            </div>
+
+            <!-- 家人選擇器 -->
+            <div class="mb-8">
+                <div class="flex items-center justify-between mb-3">
+                    <label for="personSelector" class="text-sm font-semibold text-gray-700 flex items-center gap-1">
+                        <span class="float-emoji">👨‍👩‍👧‍👦</span> 為誰紀錄？
+                    </label>
+                    <button onclick="showCustomNamesManager()" 
+                            class="text-xs px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg transition-colors duration-200 flex items-center gap-1"
+                            title="管理自訂名稱">
+                        <span>⚙️</span> 管理名稱
+                    </button>
+                </div>
+                <select id="personSelector"
+                    class="input-field w-full p-4 rounded-xl shadow-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-gray-700 font-medium"></select>
+                <input type="text" id="customPersonInput" placeholder="請輸入自訂稱謂"
+                    class="input-field hidden w-full mt-3 p-4 rounded-xl shadow-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
+            </div>
+
+            <!-- 儀表板卡片區 -->
+            <div id="dashboard" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+        </div>
+
+        <!-- 歷史紀錄與圖表檢視 (預設隱藏) -->
+        <div id="historyView" class="hidden mt-6 slide-up">
+            <div class="chart-container p-6 shadow-xl">
+                <h2 id="historyTitle" class="text-2xl font-bold mb-6 text-gray-800 flex items-center gap-2">
+                    <span class="animated-emoji">📈</span> 歷史紀錄 <span class="pulse-emoji">📊</span>
+                </h2>
+                <div class="chart-wrapper-medium">
+                    <canvas id="historyChart" class="chart-canvas-medium"></canvas>
+                </div>
+                
+                <!-- 按鈕區域 - 添加新紀錄和返回按鈕並排 -->
+                <div class="flex gap-4 mt-6 mb-6">
+                    <button id="addRecordBtn"
+                        class="primary-button flex-1 py-4 px-6 rounded-xl font-bold text-lg shadow-xl transition-all duration-300 flex items-center justify-center gap-2">
+                        <span class="text-xl">+</span> 添加新紀錄
+                    </button>
+                    <button id="backToDashboardBtn" 
+                        class="glass-button px-6 py-4 rounded-xl font-medium text-gray-700 hover:text-gray-900 transition-all duration-300 flex items-center gap-2">
+                        <span>←</span> 返回
+                    </button>
+                </div>
+                
+                <!-- 分頁控制 - 優化版 -->
+                <div class="pagination-container">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center gap-3">
+                            <span class="text-sm font-semibold text-gray-700 flex items-center gap-1">
+                                <span class="animated-emoji">📋</span> 顯示
+                            </span>
+                            <select id="recordsPerPage" class="records-select">
+                                <option value="5">5</option>
+                                <option value="10" selected>10</option>
+                                <option value="15">15</option>
+                            </select>
+                            <span class="text-sm font-semibold text-gray-700">筆記錄</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <div></div>
+                        <div class="flex items-center gap-3">
+                            <button id="prevPageBtn" class="pagination-btn flex items-center gap-2">
+                                <span>←</span> 上一頁
+                            </button>
+                            <span id="pageInfo" class="text-sm font-bold text-gray-700 px-4 py-2 bg-white rounded-lg shadow-sm border border-gray-200">第 1 頁，共 1 頁</span>
+                            <button id="nextPageBtn" class="pagination-btn flex items-center gap-2">
+                                下一頁 <span>→</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div id="historyTableContainer"></div>
+            </div>
+        </div>
+        </div>
+    </div>
+
+    <!-- 新增/編輯紀錄彈出視窗 -->
+    <div id="addRecordModal"
+        class="modal fixed inset-0 bg-black/30 hidden z-40 flex items-center justify-center p-4">
+        <div
+            class="modal-content relative mx-auto p-6 w-full max-w-md shadow-2xl rounded-3xl transform transition-all -translate-y-10 opacity-0">
+            <div class="text-center">
+                <div class="mb-4">
+                    <div class="w-16 h-16 bg-gradient-to-br from-purple-500 to-blue-500 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <span class="text-2xl animated-emoji">✨</span>
+                    </div>
+                    <h3 id="modalTitle" class="text-xl font-bold text-gray-900">添加新紀錄</h3>
+                </div>
+                <form id="healthForm" class="mt-6 space-y-4">
+                    <!-- 輸入欄位將由 JS 動態產生 -->
+                </form>
+                <div id="modalMessage" class="mt-4 text-sm font-medium h-6 flex items-center justify-center"></div>
+                <div class="mt-6 space-y-3">
+                    <button id="saveRecordBtn"
+                        class="primary-button w-full py-3 px-6 rounded-xl font-bold text-base shadow-lg transition-all duration-300">
+                        <span class="pulse-emoji">💾</span> 儲存紀錄
+                    </button>
+                    <button id="closeModalBtn"
+                        class="glass-button w-full py-3 px-6 rounded-xl font-medium text-gray-700 transition-all duration-300">
+                        取消
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 確認/警示彈出視窗 (用於刪除與錯誤提示) -->
+    <div id="confirmModal"
+        class="modal fixed inset-0 bg-black/40 hidden z-50 flex items-center justify-center p-4">
+        <div
+            class="modal-content relative mx-auto p-6 w-full max-w-sm shadow-2xl rounded-3xl transform transition-all -translate-y-10 opacity-0">
+            <div class="text-center">
+                <div class="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-gradient-to-br from-red-500 to-pink-500 mb-4">
+                    <svg class="h-8 w-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                        xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
+                        </path>
+                    </svg>
+                </div>
+                <h3 id="confirmModalTitle" class="text-xl font-bold text-gray-900 mb-3"></h3>
+                <div class="mb-6">
+                    <p id="confirmModalBody" class="text-gray-600 leading-relaxed"></p>
+                </div>
+                <div class="flex flex-col sm:flex-row gap-3">
+                    <button id="confirmModalOkBtn"
+                        class="flex-1 px-6 py-3 bg-gradient-to-r from-red-500 to-pink-500 text-white font-bold rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-105">
+                        確定
+                    </button>
+                    <button id="confirmModalCancelBtn"
+                        class="flex-1 glass-button px-6 py-3 font-medium text-gray-700 rounded-xl transition-all duration-300">
+                        取消
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        // --- 全域變數 ---
+        let userProfile = null;
+        let allLogs = [];
+        let currentHistoryChart = null;
+        let currentViewingType = null;
+        let currentPage = 1;
+        let recordsPerPage = 10;
+        let totalRecords = 0;
+        let allHistoryLogs = [];
+        const measurementTypes = [
+            { key: 'weight', name: '體重', icon: '<span class="animated-emoji">⚖️</span>', unit: 'kg', color: 'text-orange-500', fields: ['weight'] },
+            { key: 'blood_pressure', name: '血壓', icon: '<span class="heartbeat-emoji">💗</span>', unit: 'mmHg', color: 'text-red-500', fields: ['systolic_pressure', 'diastolic_pressure'] },
+            { key: 'blood_sugar', name: '血糖', icon: '<span class="pulse-emoji">🩸</span>', unit: 'mg/dL', color: 'text-rose-500', fields: ['blood_sugar'] },
+            { key: 'temperature', name: '體溫', icon: '<span class="float-emoji">🌡️</span>', unit: '°C', color: 'text-blue-500', fields: ['temperature'] },
+            { key: 'blood_oxygen', name: '血氧', icon: '<span class="animated-emoji">🫁</span>', unit: '%', color: 'text-sky-500', fields: ['blood_oxygen'] }
+        ];
+
+        // --- DOM 元素 ---
+        const addRecordModal = document.getElementById('addRecordModal');
+        const modalContent = addRecordModal.querySelector('.modal-content');
+        const modalTitle = document.getElementById('modalTitle');
+        const healthForm = document.getElementById('healthForm');
+        const closeModalBtn = document.getElementById('closeModalBtn');
+        const saveRecordBtn = document.getElementById('saveRecordBtn');
+        const dashboardView = document.getElementById('dashboardView');
+        const historyView = document.getElementById('historyView');
+        const backToDashboardBtn = document.getElementById('backToDashboardBtn');
+        const addRecordBtn = document.getElementById('addRecordBtn');
+
+        // --- LIFF 初始化 ---
+        async function initializeLiff() {
+            const liffId = "{{ liff_id }}";
+            const loadingDiv = document.getElementById("loading");
+            
+            console.log("LIFF ID received:", liffId);
+            console.log("LIFF ID type:", typeof liffId);
+            console.log("LIFF ID length:", liffId ? liffId.length : 0);
+            console.log("LIFF ID 包含引號:", liffId.includes('"'));
+            
+            // 移除可能的引號
+            const cleanLiffId = liffId.replace(/"/g, '');
+            console.log("清理後的 LIFF ID:", cleanLiffId);
+            
+            // 檢查 LIFF ID 格式 - 修復驗證邏輯
+            if (!liffId || liffId.trim() === "" || liffId === "None" || liffId === "undefined") {
+                console.error("LIFF ID 驗證失敗:", liffId);
+                loadingDiv.innerHTML = `
+                    <div class="text-center">
+                        <div class="text-red-400 text-xl mb-4">❌</div>
+                        <p class="text-white font-bold mb-2">LIFF ID 設定錯誤</p>
+                        <p class="text-white/70 text-sm mb-4">收到的 LIFF ID: "${liffId}"</p>
+                        <p class="text-white/70 text-sm mb-4">請檢查後端設定</p>
+                        <button onclick="location.reload()" class="glass-button px-6 py-3 rounded-xl font-medium text-gray-700 transition-all duration-300">
+                            重新載入
+                        </button>
+                    </div>
+                `;
+                return;
+            }
+            
+            // 使用清理後的 LIFF ID 進行後續操作
+            const finalLiffId = cleanLiffId || liffId;
+            
+            // 驗證 LIFF ID 格式是否正確
+            const liffIdPattern = /^[0-9]+-[a-zA-Z0-9]+$/;
+            if (!liffIdPattern.test(finalLiffId)) {
+                console.error("LIFF ID 格式不正確:", liffId);
+                loadingDiv.innerHTML = `
+                    <div class="text-center">
+                        <div class="text-red-400 text-xl mb-4">❌</div>
+                        <p class="text-white font-bold mb-2">LIFF ID 格式錯誤</p>
+                        <p class="text-white/70 text-sm mb-4">收到的 LIFF ID: "${liffId}"</p>
+                        <p class="text-white/70 text-sm mb-4">應該是類似 "1234567890-abcdefgh" 的格式</p>
+                        <button onclick="location.reload()" class="glass-button px-6 py-3 rounded-xl font-medium text-gray-700 transition-all duration-300">
+                            重新載入
+                        </button>
+                    </div>
+                `;
+                return;
+            }
+            
+            // 檢查是否在 LINE 環境中
+            if (!window.liff) {
+                loadingDiv.innerHTML = `
+                    <div class="text-center">
+                        <div class="text-red-400 text-xl mb-4">⚠️</div>
+                        <p class="text-white font-bold mb-2">LIFF SDK 載入失敗</p>
+                        <p class="text-white/70 text-sm mb-4">請確認您在 LINE 應用程式中開啟此頁面</p>
+                        <button onclick="location.reload()" class="glass-button px-6 py-3 rounded-xl font-medium text-gray-700 transition-all duration-300">
+                            重新載入
+                        </button>
+                    </div>
+                `;
+                return;
+            }
+
+            if (!liffId) {
+                loadingDiv.innerHTML = `
+                    <div class="text-center">
+                        <div class="text-red-400 text-xl mb-4">❌</div>
+                        <p class="text-white font-bold">錯誤：尚未設定 LIFF ID！</p>
+                    </div>
+                `;
+                return;
+            }
+
+            try {
+                console.log("正在初始化 LIFF...");
+                console.log("使用的 LIFF ID:", finalLiffId);
+                await liff.init({ liffId: finalLiffId });
+                console.log("LIFF 初始化成功");
+
+                // 檢查登入狀態
+                if (!liff.isLoggedIn()) {
+                    console.log("使用者未登入，導向登入頁面");
+                    loadingDiv.innerHTML = `
+                        <div class="text-center">
+                            <div class="text-blue-400 text-xl mb-4">🔐</div>
+                            <p class="text-white font-bold mb-2">需要登入</p>
+                            <p class="text-white/70 text-sm mb-4">正在導向 LINE 登入頁面...</p>
+                        </div>
+                    `;
+                    liff.login({ redirectUri: location.href });
+                    return;
+                }
+
+                console.log("使用者已登入，取得使用者資料");
+                userProfile = await liff.getProfile();
+                
+                if (!userProfile || !userProfile.userId) {
+                    loadingDiv.innerHTML = `
+                        <div class="text-center">
+                            <div class="text-red-400 text-xl mb-4">❌</div>
+                            <p class="text-white font-bold mb-2">無法取得使用者資訊</p>
+                            <p class="text-white/70 text-sm mb-4">請關閉頁面重新進入</p>
+                            <button onclick="liff.closeWindow()" class="glass-button px-6 py-3 rounded-xl font-medium text-gray-700 transition-all duration-300">
+                                關閉頁面
+                            </button>
+                        </div>
+                    `;
+                    return;
+                }
+
+                console.log("使用者資料取得成功:", userProfile);
+                
+                // 成功載入，顯示應用程式
+                console.log("準備顯示應用程式...");
+                loadingDiv.style.display = 'none';
+                const appElement = document.getElementById("app");
+                if (appElement) {
+                    appElement.classList.remove('hidden');
+                    appElement.style.display = 'block';
+                    console.log("應用程式已顯示");
+                } else {
+                    console.error("找不到 app 元素");
+                }
+                
+                // 初始化應用程式
+                console.log("開始初始化應用程式功能...");
+                try {
+                    await populateFamilyDropdown();
+                    console.log("家人下拉選單初始化完成");
+                    
+                    setupPaginationEvents(); // 設置分頁事件
+                    console.log("分頁事件設置完成");
+                    
+                    await loadAllHealthData(userProfile.userId);
+                    console.log("健康資料載入完成");
+                } catch (initError) {
+                    console.error("應用程式初始化過程中發生錯誤:", initError);
+                    // 即使初始化部分功能失敗，也要確保基本介面顯示
+                }
+                
+            } catch (err) {
+                console.error("LIFF 初始化失敗:", err);
+                
+                let errorMessage = "未知錯誤";
+                let errorDetail = "";
+                
+                // 根據錯誤類型提供更詳細的說明
+                if (err.code) {
+                    switch (err.code) {
+                        case "INIT_FAILED":
+                            errorMessage = "LIFF 初始化失敗";
+                            errorDetail = "請檢查 LIFF ID 是否正確";
+                            break;
+                        case "INVALID_ARGUMENT":
+                            errorMessage = "無效的參數";
+                            errorDetail = "LIFF ID 格式不正確";
+                            break;
+                        case "FORBIDDEN":
+                            errorMessage = "存取被拒絕";
+                            errorDetail = "請確認在 LINE 應用程式中開啟";
+                            break;
+                        default:
+                            errorMessage = `錯誤代碼: ${err.code}`;
+                            errorDetail = err.message || "請聯繫技術支援";
+                    }
+                } else {
+                    errorMessage = "載入失敗";
+                    errorDetail = err.message || "請重新整理頁面";
+                }
+                
+                loadingDiv.innerHTML = `
+                    <div class="text-center">
+                        <div class="text-red-400 text-xl mb-4">⚠️</div>
+                        <p class="text-white font-bold mb-2">${errorMessage}</p>
+                        <p class="text-white/70 text-sm mb-4">${errorDetail}</p>
+                        <div class="space-y-2">
+                            <button onclick="location.reload()" class="glass-button px-6 py-3 rounded-xl font-medium text-gray-700 transition-all duration-300 block w-full">
+                                重新載入
+                            </button>
+                            <button onclick="liff.closeWindow()" class="glass-button px-6 py-3 rounded-xl font-medium text-gray-700 transition-all duration-300 block w-full">
+                                關閉頁面
+                            </button>
+                        </div>
+                    </div>
+                `;
+                
+                // 如果有 showAlert 函數可用，也顯示彈出提示
+                if (typeof showAlert === 'function') {
+                    setTimeout(() => {
+                        showAlert('LIFF 錯誤', `${errorMessage}: ${errorDetail}`);
+                    }, 1000);
+                }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', initializeLiff);
+
+        // --- 資料處理 ---
+        async function loadAllHealthData(recorderId) {
+            try {
+                // 根據查看對象決定API端點
+                const targetPerson = getSelectedPerson();
+                const targetPersonId = getSelectedPersonId();
+                let apiUrl;
+                
+                if (targetPerson === '本人') {
+                    // 查看本人時使用原API
+                    apiUrl = `/api/health_logs/${recorderId}?t=${new Date().getTime()}`;
+                } else if (targetPersonId) {
+                    // 查看已綁定的家人時，使用成員的真實 LINE ID
+                    console.log(`[DEBUG] 查看已綁定成員: ${targetPerson}, member_id: ${targetPersonId}`);
+                    apiUrl = `/api/health_logs/${recorderId}/member/${targetPerson}?t=${new Date().getTime()}`;
+                } else {
+                    // 查看其他人（自訂名稱等）時，使用原API但過濾target_person
+                    console.log(`[DEBUG] 查看自訂成員: ${targetPerson}`);
+                    apiUrl = `/api/health_logs/${recorderId}?t=${new Date().getTime()}`;
+                }
+                
+                console.log(`[DEBUG] 載入健康資料，API: ${apiUrl}`);
+                const response = await fetch(apiUrl);
+
+                if (!response.ok) {
+                    let errorMsg = `伺服器錯誤 (${response.status})`
+                    try {
+                        // 嘗試從後端回應中獲取更具體的錯誤訊息
+                        const errorData = await response.json();
+                        errorMsg = errorData.error || errorData.message || errorMsg;
+                    } catch (e) {
+                        // 回應主體不是 JSON，堅持使用狀態碼錯誤。
+                    }
+                    throw new Error(errorMsg);
+                }
+
+                const textResponse = await response.text();
+                let data;
+
+                // **關鍵修復**：如果伺服器回傳空字串，我們直接將其視為一個空的資料陣列。
+                if (!textResponse) {
+                    data = [];
+                } else {
+                    try {
+                        data = JSON.parse(textResponse);
+                    } catch (e) {
+                        console.error("API 回應不是有效的 JSON:", textResponse);
+                        throw new Error('從伺服器收到的資料格式不正確。');
+                    }
+                }
+
+                // **關鍵修復**：再次確認解析後的資料確實是一個陣列。如果不是，就當作空陣列處理，避免後續程式碼出錯。
+                if (Array.isArray(data)) {
+                    allLogs = data;
+                    // 按日期排序紀錄，最新的在前面
+                    allLogs.sort((a, b) => new Date(b.record_time) - new Date(a.record_time));
+                } else {
+                    console.warn("API 回應的資料不是陣列格式，將其視為空資料。收到的資料:", data);
+                    allLogs = [];
+                }
+
+                updateDashboard();
+
+            } catch (error) {
+                console.error("載入健康資料失敗:", error);
+                // 發生任何錯誤時，都將資料清空，並顯示一個空的儀表板，而不是跳出錯誤視窗。
+                allLogs = [];
+                updateDashboard();
+                showAlert('資料載入提醒', error.message || '無法載入您的健康資料，請稍後再試。');
+            }
+        }
+
+        async function handleDelete(logId) {
+            const confirmed = await showConfirmation('刪除確認', '您確定要刪除這筆紀錄嗎？此操作無法復原。');
+            if (!confirmed) return;
+
+            try {
+                const response = await fetch(`/api/health_log/${logId}`, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ recorderId: userProfile.userId })
+                });
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.error || '刪除失敗');
+                }
+                await loadAllHealthData(userProfile.userId);
+                showHistory(currentViewingType); // 刷新歷史紀錄檢視
+            } catch (error) {
+                console.error("刪除失敗:", error);
+                showAlert('刪除失敗', error.message);
+            }
+        }
+
+        // --- UI 與檢視管理 ---
+        function updateDashboard() {
+            const dashboard = document.getElementById('dashboard');
+            dashboard.innerHTML = '';
+            const targetPerson = getSelectedPerson();
+
+            measurementTypes.forEach(type => {
+                // 修正：根據API端點決定過濾邏輯
+                const targetPersonId = getSelectedPersonId();
+                const personLogs = allLogs.filter(log => {
+                    if (targetPerson === '本人') {
+                        // 查看本人時，顯示所有後端返回的記錄（後端已經過濾了權限）
+                        return true;
+                    } else if (targetPersonId) {
+                        // 查看已綁定的家人時，顯示所有返回的記錄（API已過濾）
+                        return true;
+                    } else {
+                        // 查看自訂成員時，需要前端過濾 target_person
+                        return log.target_person === targetPerson;
+                    }
+                });
+                
+                console.log(`[DEBUG] 過濾前記錄數: ${allLogs.length}, 過濾後記錄數: ${personLogs.length}`);
+
+                let latestLog, displayValue;
+                if (type.key === 'blood_pressure') {
+                    latestLog = personLogs.find(log => log.systolic_pressure != null && log.diastolic_pressure != null);
+                    displayValue = latestLog ? `${latestLog.systolic_pressure}/${latestLog.diastolic_pressure}` : '-';
+                } else {
+                    latestLog = personLogs.find(log => log[type.key] != null);
+                    displayValue = latestLog ? latestLog[type.key] : '-';
+                }
+
+                const card = document.createElement('div');
+                card.className = 'dashboard-card fade-in';
+                card.innerHTML = `
+                    <div class="flex items-center justify-between mb-4">
+                        <p class="font-bold text-gray-800 text-lg">${type.name}</p>
+                        <span class="icon ${type.color}">${type.icon}</span>
+                    </div>
+                    <div class="value-display">
+                        <p class="text-3xl font-bold text-gray-900">${displayValue}</p>
+                        <p class="text-sm font-medium text-gray-500 mt-1">${type.unit}</p>
+                    </div>
+                `;
+                card.addEventListener('click', () => showHistory(type));
+                dashboard.appendChild(card);
+            });
+        }
+
+        function showHistory(type) {
+            currentViewingType = type;
+            currentPage = 1; // 重置頁面
+            dashboardView.classList.add('hidden');
+            historyView.classList.remove('hidden');
+
+            const targetPerson = getSelectedPerson();
+            document.getElementById('historyTitle').innerHTML = `<span class="animated-emoji">📈</span> ${targetPerson}的${type.name}歷史紀錄 <span class="pulse-emoji">📊</span>`;
+
+            // 修正：根據API端點決定過濾邏輯
+            const targetPersonId = getSelectedPersonId();
+            const personLogs = allLogs.filter(log => {
+                if (targetPerson === '本人') {
+                    // 查看本人時，顯示所有後端返回的記錄（後端已經過濾了權限）
+                    return true;
+                } else if (targetPersonId) {
+                    // 查看已綁定的家人時，顯示所有返回的記錄（API已過濾）
+                    return true;
+                } else {
+                    // 查看自訂成員時，需要前端過濾 target_person
+                    return log.target_person === targetPerson;
+                }
+            });
+            
+            console.log(`[DEBUG] 歷史記錄過濾前: ${allLogs.length}, 過濾後: ${personLogs.length}`);
+
+            renderHistoryChart(personLogs, type);
+            renderHistoryTable(personLogs, type);
+        }
+
+        function renderHistoryChart(logs, type, useCurrentPage = false) {
+            const ctx = document.getElementById('historyChart').getContext('2d');
+            if (currentHistoryChart) currentHistoryChart.destroy();
+
+            let filteredLogs = logs.filter(log => type.fields.every(f => log[f] != null)).reverse(); // 反轉以獲得時間順序
+            
+            // 如果需要使用當前分頁數據，則只顯示當前頁的數據
+            if (useCurrentPage && allHistoryLogs.length > 0) {
+                const startIndex = (currentPage - 1) * recordsPerPage;
+                const endIndex = startIndex + recordsPerPage;
+                filteredLogs = allHistoryLogs.slice(startIndex, endIndex);
+            }
+            
+            const labels = filteredLogs.map(log => new Date(log.record_time).toLocaleDateString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }));
+            const datasets = [];
+
+            if (type.key === 'blood_pressure') {
+                // 創建漸層背景
+                const ctx = document.getElementById('historyChart').getContext('2d');
+                const gradientSystolic = ctx.createLinearGradient(0, 0, 0, 400);
+                gradientSystolic.addColorStop(0, 'rgba(255, 107, 107, 0.8)');
+                gradientSystolic.addColorStop(1, 'rgba(255, 107, 107, 0.1)');
+                
+                const gradientDiastolic = ctx.createLinearGradient(0, 0, 0, 400);
+                gradientDiastolic.addColorStop(0, 'rgba(78, 205, 196, 0.8)');
+                gradientDiastolic.addColorStop(1, 'rgba(78, 205, 196, 0.1)');
+
+                datasets.push({ 
+                    label: '收縮壓', 
+                    data: filteredLogs.map(l => l.systolic_pressure), 
+                    borderColor: '#FF6B6B', 
+                    backgroundColor: gradientSystolic, 
+                    borderWidth: 3,
+                    pointBackgroundColor: '#FF6B6B',
+                    pointBorderColor: '#ffffff',
+                    pointBorderWidth: 2,
+                    pointRadius: 6,
+                    pointHoverRadius: 8,
+                    tension: 0.4, 
+                    fill: true 
+                });
+                datasets.push({ 
+                    label: '舒張壓', 
+                    data: filteredLogs.map(l => l.diastolic_pressure), 
+                    borderColor: '#4ECDC4', 
+                    backgroundColor: gradientDiastolic, 
+                    borderWidth: 3,
+                    pointBackgroundColor: '#4ECDC4',
+                    pointBorderColor: '#ffffff',
+                    pointBorderWidth: 2,
+                    pointRadius: 6,
+                    pointHoverRadius: 8,
+                    tension: 0.4, 
+                    fill: true 
+                });
+            } else {
+                // 根據不同類型使用不同的漸層色彩
+                const ctx = document.getElementById('historyChart').getContext('2d');
+                let colors = {};
+                
+                switch(type.key) {
+                    case 'weight':
+                        colors = { border: '#F9A825', bg: ['rgba(249, 168, 37, 0.8)', 'rgba(249, 168, 37, 0.1)'] };
+                        break;
+                    case 'blood_sugar':
+                        colors = { border: '#E84393', bg: ['rgba(232, 67, 147, 0.8)', 'rgba(232, 67, 147, 0.1)'] };
+                        break;
+                    case 'temperature':
+                        colors = { border: '#6A89CC', bg: ['rgba(106, 137, 204, 0.8)', 'rgba(106, 137, 204, 0.1)'] };
+                        break;
+                    case 'blood_oxygen':
+                        colors = { border: '#079992', bg: ['rgba(7, 153, 146, 0.8)', 'rgba(7, 153, 146, 0.1)'] };
+                        break;
+                    default:
+                        colors = { border: '#667eea', bg: ['rgba(102, 126, 234, 0.8)', 'rgba(102, 126, 234, 0.1)'] };
+                }
+                
+                const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+                gradient.addColorStop(0, colors.bg[0]);
+                gradient.addColorStop(1, colors.bg[1]);
+
+                datasets.push({ 
+                    label: type.name, 
+                    data: filteredLogs.map(l => l[type.key]), 
+                    borderColor: colors.border, 
+                    backgroundColor: gradient, 
+                    borderWidth: 3,
+                    pointBackgroundColor: colors.border,
+                    pointBorderColor: '#ffffff',
+                    pointBorderWidth: 2,
+                    pointRadius: 6,
+                    pointHoverRadius: 8,
+                    tension: 0.4, 
+                    fill: true 
+                });
+            }
+
+            currentHistoryChart = new Chart(ctx, { 
+                type: 'line', 
+                data: { labels, datasets }, 
+                options: { 
+                    responsive: true, 
+                    maintainAspectRatio: false,
+                    animation: {
+                        duration: 2000,
+                        easing: 'easeInOutQuart'
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            labels: {
+                                usePointStyle: true,
+                                padding: 20,
+                                font: {
+                                    size: 14,
+                                    weight: 'bold'
+                                },
+                                generateLabels: function(chart) {
+                                    const original = Chart.defaults.plugins.legend.labels.generateLabels;
+                                    const labels = original.call(this, chart);
+                                    
+                                    // 為每個標籤添加對應的 emoji
+                                    labels.forEach((label, index) => {
+                                        const dataset = chart.data.datasets[index];
+                                        if (dataset) {
+                                            // 根據標籤名稱添加對應的 emoji
+                                            if (label.text === '體重') {
+                                                label.text = '體重';
+                                            } else if (label.text === '收縮壓') {
+                                                label.text = '收縮壓';
+                                            } else if (label.text === '舒張壓') {
+                                                label.text = '舒張壓';
+                                            } else if (label.text === '血糖') {
+                                                label.text = '血糖';
+                                            } else if (label.text === '體溫') {
+                                                label.text = '體溫';
+                                            } else if (label.text === '血氧') {
+                                                label.text = '血氧';
+                                            }
+                                        }
+                                    });
+                                    
+                                    return labels;
+                                }
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                            titleColor: '#374151',
+                            bodyColor: '#374151',
+                            borderColor: '#E5E7EB',
+                            borderWidth: 1,
+                            cornerRadius: 12,
+                            displayColors: true,
+                            padding: 12
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: {
+                                color: 'rgba(156, 163, 175, 0.2)',
+                                drawBorder: false
+                            },
+                            ticks: {
+                                color: '#6B7280',
+                                font: {
+                                    size: 12
+                                }
+                            }
+                        },
+                        y: {
+                            grid: {
+                                color: 'rgba(156, 163, 175, 0.2)',
+                                drawBorder: false
+                            },
+                            ticks: {
+                                color: '#6B7280',
+                                font: {
+                                    size: 12
+                                }
+                            }
+                        }
+                    }
+                } 
+            });
+        }
+
+        function renderHistoryTable(logs, type) {
+            const container = document.getElementById('historyTableContainer');
+            container.innerHTML = '';
+
+            // 儲存所有記錄用於分頁
+            allHistoryLogs = logs.filter(log => type.fields.every(f => log[f] != null));
+            totalRecords = allHistoryLogs.length;
+
+            if (totalRecords === 0) {
+                container.innerHTML = '<p class="text-center text-gray-500 py-4">暫無紀錄</p>';
+                updatePaginationControls();
+                return;
+            }
+
+            // 計算分頁
+            const startIndex = (currentPage - 1) * recordsPerPage;
+            const endIndex = startIndex + recordsPerPage;
+            const filteredLogs = allHistoryLogs.slice(startIndex, endIndex);
+
+            updatePaginationControls();
+
+            const tableContainer = document.createElement('div');
+            tableContainer.className = 'bg-white/95 backdrop-filter backdrop-blur-lg rounded-lg shadow-md border border-white/30 overflow-hidden';
+            
+            const table = document.createElement('table');
+            table.className = 'w-full divide-y divide-gray-200 text-sm';
+            table.innerHTML = `
+                <thead class="header-gradient">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-bold uppercase tracking-wider">📅 日期時間</th>
+                        <th class="px-3 py-2 text-left text-xs font-bold uppercase tracking-wider"><span class="animated-emoji">📊</span> ${type.name}</th>
+                        <th class="px-2 py-2 text-center text-xs font-bold uppercase tracking-wider">🛠️ 刪除</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white/90 divide-y divide-gray-100">
+                    ${filteredLogs.map((log, index) => {
+                let value = (type.key === 'blood_pressure')
+                    ? `${log.systolic_pressure}/${log.diastolic_pressure}`
+                    : log[type.key];
+                return `
+                            <tr class="table-row hover:bg-gradient-to-r hover:from-purple-50 hover:to-blue-50 transition-all duration-200 ${index % 2 === 0 ? 'bg-gray-50/50' : 'bg-white/50'}">
+                                <td class="px-3 py-2 whitespace-nowrap text-xs text-gray-700">${new Date(log.record_time).toLocaleString('zh-TW', { 
+                                    month: '2-digit', 
+                                    day: '2-digit', 
+                                    hour: '2-digit', 
+                                    minute: '2-digit'
+                                })}</td>
+                                <td class="px-3 py-2 whitespace-nowrap">
+                                    <span class="text-sm font-bold text-gray-900">${value}</span>
+                                    <span class="text-xs text-gray-500 ml-1">${type.unit}</span>
+                                </td>
+                                <td class="px-2 py-2 whitespace-nowrap text-center">
+                                    <button onclick="handleDelete(${log.log_id})" class="inline-flex items-center px-2 py-1 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded transition-all duration-200">
+                                        🗑️
+                                    </button>
+                                </td>
+                            </tr>
+                        `;
+            }).join('')}
+                </tbody>
+            `;
+            
+            tableContainer.appendChild(table);
+            container.appendChild(tableContainer);
+        }
+
+        function updatePaginationControls() {
+            const totalPages = Math.ceil(totalRecords / recordsPerPage);
+            const pageInfo = document.getElementById('pageInfo');
+            const prevBtn = document.getElementById('prevPageBtn');
+            const nextBtn = document.getElementById('nextPageBtn');
+
+            // 更新頁面信息
+            pageInfo.textContent = `第 ${currentPage} 頁，共 ${totalPages} 頁 (總計 ${totalRecords} 筆)`;
+
+            // 更新按鈕狀態
+            prevBtn.disabled = currentPage <= 1;
+            nextBtn.disabled = currentPage >= totalPages;
+
+            // 確保分頁控制項始終可見，即使只有一頁
+            const paginationContainer = document.querySelector('.pagination-container');
+            if (paginationContainer) {
+                paginationContainer.style.display = 'block';
+            }
+        }
+
+
+        function setupPaginationEvents() {
+            const recordsSelect = document.getElementById('recordsPerPage');
+            const prevBtn = document.getElementById('prevPageBtn');
+            const nextBtn = document.getElementById('nextPageBtn');
+            
+            let showCurrentPageOnly = true; // 固定顯示當前頁
+
+            // 每頁記錄數變更
+            recordsSelect.addEventListener('change', (e) => {
+                recordsPerPage = parseInt(e.target.value);
+                currentPage = 1; // 重置到第一頁
+                if (currentViewingType && allHistoryLogs.length > 0) {
+                    renderHistoryTable(allHistoryLogs, currentViewingType);
+                    renderHistoryChart(allHistoryLogs, currentViewingType, showCurrentPageOnly);
+                }
+            });
+
+            // 上一頁
+            prevBtn.addEventListener('click', () => {
+                if (currentPage > 1) {
+                    currentPage--;
+                    if (currentViewingType && allHistoryLogs.length > 0) {
+                        renderHistoryTable(allHistoryLogs, currentViewingType);
+                        renderHistoryChart(allHistoryLogs, currentViewingType, showCurrentPageOnly);
+                    }
+                }
+            });
+
+            // 下一頁
+            nextBtn.addEventListener('click', () => {
+                const totalPages = Math.ceil(totalRecords / recordsPerPage);
+                if (currentPage < totalPages) {
+                    currentPage++;
+                    if (currentViewingType && allHistoryLogs.length > 0) {
+                        renderHistoryTable(allHistoryLogs, currentViewingType);
+                        renderHistoryChart(allHistoryLogs, currentViewingType, showCurrentPageOnly);
+                    }
+                }
+            });
+        }
+
+        // 自定義名稱管理
+        function getCustomNames() {
+            const userId = userProfile?.userId;
+            if (!userId) return [];
+            
+            const stored = localStorage.getItem(`customNames_${userId}`);
+            return stored ? JSON.parse(stored) : [];
+        }
+
+        function saveCustomName(name) {
+            const userId = userProfile?.userId;
+            if (!userId || !name.trim()) return;
+            
+            const customNames = getCustomNames();
+            const trimmedName = name.trim();
+            
+            // 避免重複添加
+            if (!customNames.includes(trimmedName)) {
+                customNames.push(trimmedName);
+                // 限制最多保存10個自定義名稱
+                if (customNames.length > 10) {
+                    customNames.shift(); // 移除最舊的
+                }
+                localStorage.setItem(`customNames_${userId}`, JSON.stringify(customNames));
+            }
+        }
+
+        function deleteCustomName(name) {
+            const userId = userProfile?.userId;
+            if (!userId) return;
+            
+            const customNames = getCustomNames();
+            const filteredNames = customNames.filter(n => n !== name);
+            localStorage.setItem(`customNames_${userId}`, JSON.stringify(filteredNames));
+        }
+
+        async function showCustomNamesManager() {
+            const customNames = getCustomNames();
+            if (customNames.length === 0) {
+                alert('目前沒有自訂名稱');
+                return;
+            }
+
+            const message = customNames.map((name, index) => `${index + 1}. ${name}`).join('\n');
+            const nameToDelete = prompt(`自訂名稱管理\n\n${message}\n\n請輸入要刪除的名稱（完整輸入）：`);
+            
+            if (nameToDelete && customNames.includes(nameToDelete.trim())) {
+                if (confirm(`確定要刪除「${nameToDelete.trim()}」嗎？`)) {
+                    deleteCustomName(nameToDelete.trim());
+                    await populateFamilyDropdown(); // 重新載入下拉選單
+                    alert('已成功刪除！');
+                }
+            } else if (nameToDelete) {
+                alert('找不到該名稱，請確認輸入正確');
+            }
+        }
+
+        async function populateFamilyDropdown() {
+            const select = document.getElementById('personSelector');
+            const customInput = document.getElementById('customPersonInput');
+            const defaultOptions = ["本人", "爸爸", "媽媽", "兒子", "女兒"];
+            
+            // 獲取用戶的自定義名稱
+            const customNames = getCustomNames();
+            
+            // 獲取已綁定的家人列表
+            let familyMembers = [];
+            if (userProfile && userProfile.userId) {
+                try {
+                    console.log(`[DEBUG] 開始獲取家人列表，用戶ID: ${userProfile.userId}`);
+                    const response = await fetch(`/api/family_list/${userProfile.userId}`);
+                    console.log(`[DEBUG] API 回應狀態: ${response.status}`);
+                    
+                    if (response.ok) {
+                        familyMembers = await response.json();
+                        console.log(`[DEBUG] 已綁定的家人數量: ${familyMembers.length}`);
+                        console.log(`[DEBUG] 已綁定的家人詳細資料:`, familyMembers);
+                    } else {
+                        console.error(`[DEBUG] API 回應錯誤: ${response.status} ${response.statusText}`);
+                        const errorText = await response.text();
+                        console.error(`[DEBUG] 錯誤詳情:`, errorText);
+                    }
+                } catch (error) {
+                    console.error(`[DEBUG] 載入家人列表失敗:`, error);
+                }
+            } else {
+                console.log(`[DEBUG] 無法獲取家人列表 - userProfile:`, userProfile);
+            }
+
+            // 清空選項
+            select.innerHTML = '';
+            
+            // 添加預設選項
+            defaultOptions.forEach(name => {
+                const option = document.createElement('option');
+                option.value = name;
+                option.textContent = name;
+                select.appendChild(option);
+            });
+            
+            // 如果有已綁定的家人，添加分隔線和家人選項
+            if (familyMembers.length > 0) {
+                // 添加分隔線
+                const familySeparator = document.createElement('option');
+                familySeparator.disabled = true;
+                familySeparator.textContent = '已綁定的家人';
+                familySeparator.style.fontStyle = 'italic';
+                familySeparator.style.color = '#999';
+                select.appendChild(familySeparator);
+                
+                // 添加已綁定的家人選項
+                familyMembers.forEach(member => {
+                    console.log(`[DEBUG] 處理家人成員:`, member);
+                    console.log(`[DEBUG] relation_type: ${member.relation_type}`);
+                    console.log(`[DEBUG] recipient_line_id: ${member.recipient_line_id}`);
+                    
+                    const option = document.createElement('option');
+                    option.value = member.relation_type;
+                    option.textContent = `👨‍👩‍👧‍👦 ${member.relation_type}`;
+                    option.setAttribute('data-family', 'true');
+                    option.setAttribute('data-member-id', member.recipient_line_id);
+                    
+                    console.log(`[DEBUG] 創建的選項:`, {
+                        value: option.value,
+                        text: option.textContent,
+                        'data-family': option.getAttribute('data-family'),
+                        'data-member-id': option.getAttribute('data-member-id')
+                    });
+                    
+                    select.appendChild(option);
+                });
+            }
+            
+            // 如果有自定義名稱，添加分隔線和自定義選項
+            if (customNames.length > 0) {
+                // 添加分隔線
+                const separator = document.createElement('option');
+                separator.disabled = true;
+                separator.textContent = '我的自訂名稱';
+                separator.style.fontStyle = 'italic';
+                separator.style.color = '#999';
+                select.appendChild(separator);
+                
+                // 添加自定義名稱選項
+                customNames.forEach(name => {
+                    const option = document.createElement('option');
+                    option.value = name;
+                    option.textContent = `👤 ${name}`;
+                    option.setAttribute('data-custom', 'true');
+                    option.setAttribute('data-name', name);
+                    select.appendChild(option);
+                });
+            }
+            
+            // 添加"其他"選項
+            const otherOption = document.createElement('option');
+            otherOption.value = 'other';
+            otherOption.textContent = '✏️ 其他...';
+            select.appendChild(otherOption);
+
+            // 選擇器變更事件
+            select.addEventListener('change', async (event) => {
+                const isOther = event.target.value === 'other';
+                customInput.classList.toggle('hidden', !isOther);
+                if (isOther) {
+                    customInput.focus();
+                    customInput.value = ''; // 清空輸入框
+                }
+                
+                // 重新載入健康資料（因為查看對象改變了）
+                await loadAllHealthData(userProfile.userId);
+                
+                // 如果歷史紀錄檢視是活動的，也更新它
+                if (!historyView.classList.contains('hidden') && currentViewingType) {
+                    showHistory(currentViewingType);
+                }
+            });
+            
+            // 自定義輸入框事件
+            customInput.addEventListener('input', updateDashboard);
+            
+            // 當用戶完成輸入自定義名稱時保存
+            customInput.addEventListener('blur', () => {
+                const customName = customInput.value.trim();
+                if (customName) {
+                    saveCustomName(customName);
+                    // 重新填充下拉選單以包含新的自定義名稱
+                    setTimeout(async () => {
+                        await populateFamilyDropdown();
+                        // 選擇剛剛添加的自定義名稱
+                        select.value = customName;
+                        customInput.classList.add('hidden');
+                        updateDashboard();
+                    }, 100);
+                }
+            });
+            
+            // 按Enter鍵也觸發保存
+            customInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    customInput.blur(); // 觸發blur事件
+                }
+            });
+        }
+
+        function getSelectedPerson() {
+            const selector = document.getElementById('personSelector');
+            if (selector.value === 'other') {
+                return document.getElementById('customPersonInput').value.trim() || '自訂';
+            }
+            return selector.value;
+        }
+
+        function getSelectedPersonId() {
+            const selector = document.getElementById('personSelector');
+            const selectedOption = selector.options[selector.selectedIndex];
+            
+            console.log(`[DEBUG] getSelectedPersonId - 選中的選項:`, selectedOption);
+            console.log(`[DEBUG] getSelectedPersonId - 選項值:`, selectedOption?.value);
+            console.log(`[DEBUG] getSelectedPersonId - data-member-id:`, selectedOption?.getAttribute('data-member-id'));
+            console.log(`[DEBUG] getSelectedPersonId - data-family:`, selectedOption?.getAttribute('data-family'));
+            
+            // 如果是已綁定的家人，返回 member_id
+            if (selectedOption && selectedOption.getAttribute('data-member-id')) {
+                const memberId = selectedOption.getAttribute('data-member-id');
+                console.log(`[DEBUG] getSelectedPersonId - 返回 member_id:`, memberId);
+                return memberId;
+            }
+            
+            // 如果是其他情況，返回 null（使用原 API）
+            console.log(`[DEBUG] getSelectedPersonId - 返回 null`);
+            return null;
+        }
+
+        // --- 彈出視窗處理 ---
+
+        function openModal(type) {
+            currentViewingType = type;
+            modalTitle.innerText = `添加 ${type.name} 紀錄`;
+            healthForm.innerHTML = '';
+
+            type.fields.forEach(field => {
+                let placeholder = '';
+                // 用欄位名稱跟測量型別判斷
+                if (type.key === 'weight') placeholder = '00.0 kg';
+                else if (type.key === 'temperature') placeholder = '00.0 °C';
+                else if (type.key === 'blood_sugar') placeholder = '00.0 mg/dL';
+                else if (type.key === 'blood_oxygen') placeholder = '00.0 %';
+                else if (field === 'systolic_pressure') placeholder = '收縮壓 (mmHg)';
+                else if (field === 'diastolic_pressure') placeholder = '舒張壓 (mmHg)';
+                else placeholder = field;
+                healthForm.innerHTML += `<input type="number" step="0.1" name="${field}" placeholder="${placeholder}" class="input-field w-full px-4 py-3 rounded-xl shadow-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-gray-700 font-medium">`;
+            });
+            // 添加時間選擇區塊，讓它更明顯
+            healthForm.innerHTML += `
+                <div class="mb-4">
+                    <label for="record_time_local" class="block text-sm font-medium text-gray-700 mb-2">📅 記錄時間</label>
+                    <input type="datetime-local" name="record_time_local" id="record_time_local" 
+                           class="input-field w-full px-4 py-3 rounded-xl shadow-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-gray-700 font-medium"
+                           style="background-color: #f8f9fa; border: 2px solid #e9ecef;">
+                    <small class="text-gray-500 text-xs mt-1 block">💡 可以選擇任何日期和時間</small>
+                </div>
+            `;
+            
+            // 設定預設時間為當前時間，但用戶可以修改
+            setTimeout(() => {
+                const timeInput = document.querySelector('input[name="record_time_local"]');
+                if (timeInput) {
+                    const now = new Date();
+                    // 轉換為本地時間格式
+                    const year = now.getFullYear();
+                    const month = String(now.getMonth() + 1).padStart(2, '0');
+                    const day = String(now.getDate()).padStart(2, '0');
+                    const hours = String(now.getHours()).padStart(2, '0');
+                    const minutes = String(now.getMinutes()).padStart(2, '0');
+                    timeInput.value = `${year}-${month}-${day}T${hours}:${minutes}`;
+                }
+            }, 100);
+            addRecordModal.classList.remove('hidden');
+            setTimeout(() => {
+                modalContent.classList.remove('-translate-y-10', 'opacity-0');
+            }, 10);
+        }
+
+
+        function closeModal() {
+            modalContent.classList.add('-translate-y-10', 'opacity-0');
+            setTimeout(() => {
+                addRecordModal.classList.add('hidden');
+                healthForm.reset();
+                document.getElementById("modalMessage").innerText = "";
+            }, 250);
+        }
+
+        function showConfirmation(title, body) {
+            return new Promise((resolve) => {
+                const modal = document.getElementById('confirmModal');
+                const modalContent = modal.querySelector('.modal-content');
+                document.getElementById('confirmModalTitle').textContent = title;
+                document.getElementById('confirmModalBody').textContent = body;
+                const okBtn = document.getElementById('confirmModalOkBtn');
+                const cancelBtn = document.getElementById('confirmModalCancelBtn');
+
+                cancelBtn.style.display = '';
+                okBtn.textContent = '確定';
+
+                const handleOk = () => { cleanup(); resolve(true); };
+                const handleCancel = () => { cleanup(); resolve(false); };
+
+                const cleanup = () => {
+                    modalContent.classList.add('-translate-y-10', 'opacity-0');
+                    setTimeout(() => modal.classList.add('hidden'), 250);
+                    okBtn.removeEventListener('click', handleOk);
+                    cancelBtn.removeEventListener('click', handleCancel);
+                };
+
+                okBtn.addEventListener('click', handleOk);
+                cancelBtn.addEventListener('click', handleCancel);
+
+                modal.classList.remove('hidden');
+                setTimeout(() => modalContent.classList.remove('-translate-y-10', 'opacity-0'), 10);
+            });
+        }
+
+        function showAlert(title, body) {
+            const modal = document.getElementById('confirmModal');
+            const modalContent = modal.querySelector('.modal-content');
+            document.getElementById('confirmModalTitle').textContent = title;
+            document.getElementById('confirmModalBody').textContent = body;
+            const okBtn = document.getElementById('confirmModalOkBtn');
+            const cancelBtn = document.getElementById('confirmModalCancelBtn');
+
+            cancelBtn.style.display = 'none';
+            okBtn.textContent = '關閉';
+
+            const handleOk = () => {
+                modalContent.classList.add('-translate-y-10', 'opacity-0');
+                setTimeout(() => modal.classList.add('hidden'), 250);
+                okBtn.removeEventListener('click', handleOk);
+            };
+
+            okBtn.addEventListener('click', handleOk);
+
+            modal.classList.remove('hidden');
+            setTimeout(() => modalContent.classList.remove('-translate-y-10', 'opacity-0'), 10);
+        }
+
+        // --- 事件監聽器 ---
+        closeModalBtn.addEventListener('click', closeModal);
+        backToDashboardBtn.addEventListener('click', () => {
+            historyView.classList.add('hidden');
+            dashboardView.classList.remove('hidden');
+        });
+        addRecordBtn.addEventListener('click', () => {
+            if (currentViewingType) openModal(currentViewingType);
+        });
+
+        saveRecordBtn.addEventListener('click', async () => {
+            const messageDiv = document.getElementById("modalMessage");
+            if (!userProfile) {
+                messageDiv.innerHTML = `<span class="text-red-500">❌ 無法取得使用者資料</span>`;
+                return;
+            }
+
+            const formData = new FormData(healthForm);
+            const recordTimeLocal = formData.get('record_time_local');
+            
+            console.log('[DEBUG] 表單時間值:', recordTimeLocal);
+
+            const targetPerson = getSelectedPerson();
+            const targetPersonId = getSelectedPersonId();
+            
+            // 修復時間處理：確保始終使用正確的本地時間格式
+            let finalRecordTime;
+            if (recordTimeLocal) {
+                // 用戶選擇了時間，直接使用（格式：YYYY-MM-DDTHH:MM）
+                finalRecordTime = recordTimeLocal + ':00'; // 添加秒數
+                console.log('[DEBUG] 使用用戶選擇的時間:', finalRecordTime);
+            } else {
+                // 用戶沒有選擇，使用當前本地時間
+                const now = new Date();
+                const year = now.getFullYear();
+                const month = String(now.getMonth() + 1).padStart(2, '0');
+                const day = String(now.getDate()).padStart(2, '0');
+                const hours = String(now.getHours()).padStart(2, '0');
+                const minutes = String(now.getMinutes()).padStart(2, '0');
+                const seconds = String(now.getSeconds()).padStart(2, '0');
+                finalRecordTime = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+                console.log('[DEBUG] 使用當前本地時間:', finalRecordTime);
+            }
+            
+            const data = {
+                recorderId: userProfile.userId,
+                targetPerson: targetPerson,
+                record_time: finalRecordTime
+            };
+            
+            // 如果是已綁定的家人，添加額外的識別資訊
+            if (targetPersonId) {
+                data.targetPersonId = targetPersonId;
+            }
+            
+            console.log(`[DEBUG] 準備保存健康記錄:`, data);
+
+            let hasValue = false;
+            let missingFields = [];
+            
+            // 特殊處理血壓：收縮壓和舒張壓都必須填寫
+            if (currentViewingType.key === 'blood_pressure') {
+                const systolic = formData.get('systolic_pressure');
+                const diastolic = formData.get('diastolic_pressure');
+                
+                if (!systolic || systolic.trim() === '') {
+                    missingFields.push('收縮壓');
+                }
+                if (!diastolic || diastolic.trim() === '') {
+                    missingFields.push('舒張壓');
+                }
+                
+                if (missingFields.length > 0) {
+                    messageDiv.innerHTML = `<span class="text-red-500">❌ 請填寫：${missingFields.join('、')}</span>`;
+                    return;
+                }
+                
+                // 驗證血壓值的合理性
+                const systolicValue = parseFloat(systolic);
+                const diastolicValue = parseFloat(diastolic);
+                
+                if (systolicValue <= diastolicValue) {
+                    messageDiv.innerHTML = `<span class="text-red-500">❌ 收縮壓應該大於舒張壓</span>`;
+                    return;
+                }
+                
+                if (systolicValue < 50 || systolicValue > 300 || diastolicValue < 30 || diastolicValue > 200) {
+                    messageDiv.innerHTML = `<span class="text-red-500">❌ 血壓數值超出正常範圍</span>`;
+                    return;
+                }
+                
+                data['systolic_pressure'] = systolicValue;
+                data['diastolic_pressure'] = diastolicValue;
+                hasValue = true;
+            } else {
+                // 其他類型的數據驗證
+                currentViewingType.fields.forEach(field => {
+                    const value = formData.get(field);
+                    if (value && value.trim() !== '') {
+                        data[field] = parseFloat(value);
+                        hasValue = true;
+                    }
+                });
+            }
+
+            if (!hasValue) {
+                messageDiv.innerHTML = `<span class="text-red-500">❌ 請至少填寫一項數據</span>`;
+                return;
+            }
+
+            saveRecordBtn.disabled = true;
+            messageDiv.innerHTML = `<span class="text-blue-500">💾 正在儲存...</span>`;
+            try {
+                const response = await fetch("/api/health_log", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.error || '儲存失敗');
+                }
+
+                messageDiv.innerHTML = `<span class="text-green-500">✅ 紀錄成功！</span>`;
+                await loadAllHealthData(userProfile.userId);
+
+                setTimeout(() => {
+                    closeModal();
+                    showHistory(currentViewingType);
+                }, 1000);
+
+            } catch (error) {
+                messageDiv.innerHTML = `<span class="text-red-500">❌ 儲存失敗: ${error.message}</span>`;
+            } finally {
+                saveRecordBtn.disabled = false;
+            }
+        });
+
+        // --- 啟動 ---
+        document.addEventListener('DOMContentLoaded', initializeLiff);
+
+    </script>
+</body>
+
+</html>

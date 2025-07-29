@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>用藥提醒設定</title>
+    <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <style>
+        :root {
+            --primary-color: #8FD7E1;
+            --primary-dark: #ffffff;
+            --background-gradient: #CBEEF3;
+            --button-gradient: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--background-gradient);
+            min-height: 100vh;
+            padding: 20px;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .container {
+            max-width: 400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            opacity: 0;
+            transform: translateY(20px);
+            transition: opacity 0.5s ease, transform 0.5s ease;
+        }
+
+        .container.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .header {
+            background: #8FD7E1;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .form-container {
+            padding: 25px 20px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 8px;
+        }
+
+        .required {
+            color: #e74c3c;
+            margin-left: 2px;
+        }
+
+        .form-input,
+        .form-select {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e1e8ed;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+            background: #f8f9fa;
+        }
+
+        .form-input-custom {
+            display: none;
+            margin-top: 10px;
+        }
+
+        .form-input:focus,
+        .form-select:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            background: white;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 30px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-cancel {
+            background: #FCD5CE;
+            color: #BA181B;
+            border: 2px solid #FCD5CE;
+            font-weight: bold;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .btn-cancel:hover {
+            background: #f8c2ba;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(186, 24, 27, 0.3);
+        }
+
+        .btn-submit {
+            background: #d0f0c0;
+            color: #057033;
+            border: 2px solid #d0f0c0;
+            font-weight: bold;
+            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .btn-submit:hover {
+            background: #c5e8b5;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(5, 112, 51, 0.3);
+        }
+
+        .btn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .time-inputs-wrapper {
+            display: none;
+            grid-template-columns: 1fr;
+            gap: 15px;
+            margin-top: 15px;
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .time-input-placeholder {
+            position: relative;
+            display: block;
+            width: 100%;
+        }
+
+        .time-input-placeholder input[type="time"] {
+            width: 100%;
+            padding: 18px 20px;
+            border: 2px solid #e1e8ed;
+            border-radius: 10px;
+            font-size: 18px;
+            background: #f8f9fa;
+            color: transparent;
+            position: relative;
+            z-index: 1;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+            min-height: 56px;
+        }
+
+        /* 針對 WebKit 瀏覽器的特殊處理 */
+        .time-input-placeholder input[type="time"]::-webkit-datetime-edit {
+            color: transparent;
+        }
+
+        .time-input-placeholder.has-value input[type="time"]::-webkit-datetime-edit,
+        .time-input-placeholder input[type="time"]:focus::-webkit-datetime-edit {
+            color: #333;
+        }
+
+        .time-input-placeholder.has-value input[type="time"] {
+            color: #333;
+            background: white;
+        }
+
+        .time-input-placeholder input[type="time"]:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            background: white;
+            color: #333;
+        }
+
+        .time-input-placeholder::before {
+            content: '⏰ 選擇時間';
+            position: absolute;
+            left: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #999;
+            pointer-events: none;
+            transition: opacity 0.2s ease, visibility 0.2s ease;
+            font-size: 18px;
+            z-index: 2;
+            background: transparent;
+            display: block;
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .time-input-placeholder.has-value::before,
+        .time-input-placeholder.focused::before {
+            opacity: 0;
+            visibility: hidden;
+        }
+
+        .overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(4px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .overlay.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .toast {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translate(-50%, -150%);
+            padding: 12px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            z-index: 101;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            transition: transform 0.4s ease-in-out;
+        }
+
+        .toast.show {
+            transform: translate(-50%, 0);
+        }
+
+        .toast.success {
+            background-color: #28a745;
+        }
+
+        .toast.error {
+            background-color: #dc3545;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="loading-overlay" class="overlay visible">
+        <div class="spinner"></div>
+    </div>
+
+    <div id="toast-notification" class="toast"></div>
+
+    <div id="main-container" class="container">
+        <div class="header">
+            <h1 id="page-title">用藥提醒設定</h1>
+        </div>
+
+        <form class="form-container" id="reminder-form">
+            <div class="form-group">
+                <label for="drug_name" class="form-label">藥物名稱<span class="required">*</span></label>
+                <input type="text" class="form-input" id="drug_name" name="drug_name" placeholder="例如：魚油、高血壓藥" required>
+            </div>
+
+            <div class="form-group">
+                <label for="frequency_name" class="form-label">提醒頻率<span class="required">*</span></label>
+                <select class="form-select" id="frequency_name" name="frequency_name" required>
+                    <option value="">請選擇服用頻率</option>
+                    <option value="每日一次">每日一次</option>
+                    <option value="每日二次">每日二次</option>
+                    <option value="每日三次">每日三次</option>
+                    <option value="每日四次">每日四次</option>
+                    <option value="每日五次">每日五次</option>
+                    <option value="other">其他</option>
+                </select>
+                <input type="text" class="form-input form-input-custom" id="frequency_name_custom"
+                    name="frequency_name_custom" placeholder="請輸入自訂頻率">
+
+                <div id="time-inputs-container" class="time-inputs-wrapper"></div>
+            </div>
+
+            <div class="form-group">
+                <label for="dose_quantity_select" class="form-label">服用劑量</label>
+                <select class="form-select" id="dose_quantity_select" name="dose_quantity_select">
+                    <option value="">請選擇劑量</option>
+                    <option value="1顆">1顆</option>
+                    <option value="2顆">2顆</option>
+                    <option value="1包">1包</option>
+                    <option value="半包">半包</option>
+                    <option value="5cc">5cc</option>
+                    <option value="10ml">10ml</option>
+                    <option value="other">其他</option>
+                </select>
+                <input type="text" class="form-input form-input-custom" id="dose_quantity_select_custom"
+                    name="dose_quantity_custom" placeholder="請輸入自訂劑量">
+            </div>
+
+            <div class="form-group">
+                <label for="notes" class="form-label">備註</label>
+                <textarea class="form-input" id="notes" name="notes" placeholder="可選填，例如：飯後服用"
+                    style="min-height: 80px; resize: vertical;"></textarea>
+            </div>
+
+            <div class="button-group">
+                <button type="submit" id="submit-btn" class="btn btn-submit">儲存提醒</button>
+                <button type="button" id="cancel-btn" class="btn btn-cancel">取消</button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        // 使用樣板字面值來安全地插入變數
+        const pageState = {
+            liffId: '{{ liff_id | safe }}',
+            mode: '{{ mode | safe }}',
+            memberId: '{{ member_id | safe }}',
+            reminderId: '{{ reminder_id | safe }}',
+            idToken: null,
+        };
+
+        const form = document.getElementById('reminder-form');
+        const pageTitle = document.getElementById('page-title');
+        const frequencySelect = document.getElementById('frequency_name');
+        const timeInputsContainer = document.getElementById('time-inputs-container');
+        const submitBtn = document.getElementById('submit-btn');
+        const cancelBtn = document.getElementById('cancel-btn');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const toast = document.getElementById('toast-notification');
+        const mainContainer = document.getElementById('main-container');
+        const dosageSelect = document.getElementById('dose_quantity_select');
+
+        async function initializeApp() {
+            try {
+                await liff.init({ liffId: pageState.liffId });
+                if (!liff.isLoggedIn()) {
+                    liff.login();
+                    return;
+                }
+                pageState.idToken = liff.getIDToken();
+                if (!pageState.idToken) {
+                    throw new Error('無法取得使用者憑證，請重新登入。');
+                }
+
+                setupEventListeners();
+
+                if (pageState.mode === 'edit') {
+                    pageTitle.textContent = '編輯用藥提醒';
+                    pageTitle.style.color = '#20538F';
+                    submitBtn.textContent = '更新提醒';
+                    await loadReminderForEdit();
+                } else {
+                    pageTitle.textContent = '新增用藥提醒';
+                    pageTitle.style.color = '#20538F';
+                }
+            } catch (err) {
+                console.error('LIFF/App 初始化失敗', err);
+                showToast(err.message || '程式初始化失敗，請稍後再試。', 'error');
+            } finally {
+                loadingOverlay.classList.remove('visible');
+                mainContainer.classList.add('visible');
+            }
+        }
+
+        function setupEventListeners() {
+            form.addEventListener('submit', handleFormSubmit);
+            frequencySelect.addEventListener('change', renderTimeInputs);
+            frequencySelect.addEventListener('change', handleCustomField);
+            dosageSelect.addEventListener('change', handleCustomField);
+            cancelBtn.addEventListener('click', () => {
+                if (liff.isInClient()) liff.closeWindow();
+            });
+        }
+
+        function renderTimeInputs() {
+            const selectedValue = frequencySelect.value;
+            let count = 0;
+
+            if (selectedValue.startsWith('每日')) {
+                const chineseNumMap = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5 };
+                const numChar = selectedValue.charAt(2);
+                count = chineseNumMap[numChar] || 0;
+            } else if (selectedValue === 'other') {
+                count = 5;
+            }
+
+            timeInputsContainer.innerHTML = '';
+            if (count > 0) {
+                timeInputsContainer.style.display = 'grid';
+                timeInputsContainer.style.gridTemplateColumns = count > 1 ? 'repeat(2, 1fr)' : '1fr';
+                timeInputsContainer.style.gap = '12px';
+
+                // 「其他」選項才顯示說明
+                if (selectedValue === 'other') {
+                    const instructionDiv = document.createElement('div');
+                    instructionDiv.className = 'time-instruction';
+                    instructionDiv.style.gridColumn = '1 / -1';
+                    instructionDiv.style.marginBottom = '10px';
+                    instructionDiv.style.fontSize = '14px';
+                    instructionDiv.style.color = '#666';
+                    instructionDiv.style.textAlign = 'center';
+                    instructionDiv.innerHTML = '💡 請選擇 1-5 個提醒時間（可留空不用的時間）';
+                    timeInputsContainer.appendChild(instructionDiv);
+                }
+
+                for (let i = 1; i <= count; i++) {
+                    // 統一包一層浮水印用的 div
+                    const placeholderWrapper = document.createElement('div');
+                    placeholderWrapper.className = 'time-input-placeholder';
+
+                    // input 本身
+                    const timeInput = document.createElement('input');
+                    timeInput.type = 'time';
+                    timeInput.id = `time_slot_${i}`;
+                    timeInput.name = `time_slot_${i}`;
+                    timeInput.autocomplete = 'off';
+
+                    // 必填判斷
+                    timeInput.required = (selectedValue !== 'other');
+
+                    // 有值時加 has-value，以及 focus 事件
+                    timeInput.addEventListener('input', (e) => {
+                        e.target.parentElement.classList.toggle('has-value', !!e.target.value);
+                    });
+
+                    timeInput.addEventListener('focus', (e) => {
+                        e.target.parentElement.classList.add('focused');
+                    });
+
+                    timeInput.addEventListener('blur', (e) => {
+                        e.target.parentElement.classList.remove('focused');
+                    });
+
+                    // 初始化時檢查是否已有值
+                    if (timeInput.value) {
+                        placeholderWrapper.classList.add('has-value');
+                    }
+
+                    placeholderWrapper.appendChild(timeInput);
+                    timeInputsContainer.appendChild(placeholderWrapper);
+                }
+            } else {
+                timeInputsContainer.style.display = 'none';
+            }
+        }
+
+        function handleCustomField(event) {
+            const selectElement = event.target;
+            const customInputElement = document.getElementById(selectElement.id + '_custom');
+            if (!customInputElement) return;
+
+            if (selectElement.value === 'other') {
+                customInputElement.style.display = 'block';
+                customInputElement.required = true;
+            } else {
+                customInputElement.style.display = 'none';
+                customInputElement.required = false;
+                customInputElement.value = '';
+            }
+        }
+
+        function showLoading(isLoading) {
+            loadingOverlay.classList.toggle('visible', isLoading);
+            submitBtn.disabled = isLoading;
+        }
+
+        function showToast(message, type = 'success') {
+            toast.textContent = message;
+            toast.className = `toast ${type}`;
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        async function loadReminderForEdit() {
+            if (!pageState.reminderId) return;
+            showLoading(true);
+            try {
+                const response = await fetch(`/api/reminders/${pageState.reminderId}`, {
+                    headers: { 'Authorization': `Bearer ${pageState.idToken}` }
+                });
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || `無法載入提醒資料 (${response.status})`);
+                }
+
+                const data = await response.json();
+
+                const setSelectOrCustom = (selectElem, value) => {
+                    const customElem = document.getElementById(selectElem.id + '_custom');
+                    if (!value) return;
+                    const options = Array.from(selectElem.options).map(opt => opt.value);
+                    if (options.includes(value)) {
+                        selectElem.value = value;
+                    } else if (customElem) {
+                        selectElem.value = 'other';
+                        customElem.style.display = 'block';
+                        customElem.value = value;
+                        customElem.required = true;
+                    }
+                    selectElem.dispatchEvent(new Event('change'));
+                };
+
+                form.elements.drug_name.value = data.drug_name || '';
+                setSelectOrCustom(frequencySelect, data.frequency_name);
+                setSelectOrCustom(dosageSelect, data.dose_quantity);
+                form.elements.notes.value = data.notes || '';
+
+                // 延遲一點時間以確保 DOM 更新後再填入時間
+                setTimeout(() => {
+                    for (let i = 1; i <= 5; i++) {
+                        const timeSlotKey = `time_slot_${i}`;
+                        const timeInput = form.elements[timeSlotKey];
+                        if (data[timeSlotKey] && timeInput) {
+                            timeInput.value = data[timeSlotKey].substring(0, 5); // 確保格式為 HH:mm
+                            timeInput.parentElement.classList.add('has-value');
+                        }
+                    }
+                }, 50);
+
+            } catch (error) {
+                console.error('載入提醒資料時出錯:', error);
+                showToast(error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        async function handleFormSubmit(event) {
+            event.preventDefault();
+
+            // 自訂驗證：如果選擇「其他」頻率，至少要填入一個時間
+            if (frequencySelect.value === 'other') {
+                const timeInputs = timeInputsContainer.querySelectorAll('input[type="time"]');
+                const hasAtLeastOneTime = Array.from(timeInputs).some(input => input.value.trim() !== '');
+
+                if (!hasAtLeastOneTime) {
+                    showToast('請至少設定一個提醒時間！', 'error');
+                    return;
+                }
+            }
+
+            if (!form.checkValidity()) {
+                form.reportValidity();
+                return;
+            }
+            showLoading(true);
+
+            const formData = new FormData(form);
+            const formDataObj = {};
+            for (let [key, value] of formData.entries()) {
+                formDataObj[key] = value;
+            }
+
+            if (formDataObj.frequency_name === 'other') {
+                formDataObj.frequency_name = formDataObj.frequency_name_custom;
+            }
+            if (formDataObj.dose_quantity_select === 'other') {
+                formDataObj.dose_quantity = formDataObj.dose_quantity_custom;
+            } else {
+                formDataObj.dose_quantity = formDataObj.dose_quantity_select;
+            }
+            // 清理不必要的自訂欄位
+            delete formDataObj.frequency_name_custom;
+            delete formDataObj.dose_quantity_select;
+            delete formDataObj.dose_quantity_select_custom;
+
+            // 【已修正】明確區分新增與更新時的 payload
+            let url, method, body;
+            const headers = {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${pageState.idToken}`
+            };
+
+            if (pageState.mode === 'edit') {
+                url = `/api/reminders/${pageState.reminderId}`;
+                method = 'PUT';
+                // 更新時，body 只包含表單資料
+                body = JSON.stringify({ formData: formDataObj });
+            } else {
+                url = '/api/reminders';
+                method = 'POST';
+                // 新增時，body 包含 idToken 和 memberId
+                body = JSON.stringify({
+                    idToken: pageState.idToken,
+                    memberId: pageState.memberId,
+                    formData: formDataObj
+                });
+            }
+
+            try {
+                const response = await fetch(url, { method, headers, body });
+                const result = await response.json();
+                if (!result.success) {
+                    throw new Error(result.message || '儲存失敗');
+                }
+
+                showToast(pageState.mode === 'edit' ? '更新成功！' : '新增成功！', 'success');
+                setTimeout(() => {
+                    if (liff.isInClient()) liff.closeWindow();
+                }, 1500);
+
+            } catch (error) {
+                console.error('提交表單時出錯:', error);
+                showToast(error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', initializeApp);
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,56 @@
+# Docker ignore 檔案 - 排除不需要的檔案
+
+# 開發和測試檔案
+*.md
+README*
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# 測試和臨時檔案
+test_*.py
+tmp_*
+temp_images/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+api_client.py
+api.py
+test_real_image.py
+setup_richmenu.py
+# 日誌檔案
+*.log
+logs/
+
+# 環境檔案 (敏感資訊)
+.env
+*.env
+
+# 備份檔案
+*.bak
+*.backup
+*.old
+
+# 作業系統檔案
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# IDE 檔案
+*.sublime-*
+*.code-workspace
+
+# 文檔檔案 (可選)
+docs/
+*.pdf
+*.docx
+
+# 不需要的腳本
+install_fonts.sh
+deploy_gcp_fonts.md
+test_font_display.py
