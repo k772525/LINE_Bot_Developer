@@ -152,6 +152,84 @@ def match_drugs_with_database(prescription_data: dict, drug_database: list, api_
         print(f"AI 匹配失敗: {e}")
         return {"error": f"AI 匹配失敗: {str(e)}"}
 
+def parse_text_based_reminder_ultra_fast(text: str) -> dict:
+    """
+    超快速本地解析用藥提醒，避免API調用
+    """
+    import re
+    
+    # 快速檢查是否包含藥物關鍵字
+    if not any(keyword in text for keyword in ['藥', '血壓', '血糖', '胃', '維他命', '鈣片']):
+        return None
+    
+    result = {
+        'member': '本人',
+        'drug_name': None,
+        'dose_quantity': None,
+        'frequency_name': None,
+        'time_slots': [],
+        'notes': '語音輸入',
+        'confidence': 0.8
+    }
+    
+    # 快速藥物名稱提取
+    drug_patterns = [
+        r'血壓藥', r'血糖藥', r'胃藥', r'感冒藥', r'止痛藥', 
+        r'維他命', r'鈣片', r'血脂藥', r'心臟藥'
+    ]
+    
+    for pattern in drug_patterns:
+        if re.search(pattern, text):
+            result['drug_name'] = pattern
+            break
+    
+    if not result['drug_name']:
+        # 嘗試提取其他藥物名稱
+        drug_match = re.search(r'([\w\u4e00-\u9fff]+)藥', text)
+        if drug_match:
+            result['drug_name'] = drug_match.group(0)
+    
+    # 快速時間提取
+    time_patterns = [
+        (r'(\d{1,2})點', lambda m: f"{int(m.group(1)):02d}:00"),
+        (r'早上', '08:00'),
+        (r'中午', '12:00'), 
+        (r'下午', '14:00'),
+        (r'晚上', '20:00'),
+        (r'睡前', '22:00')
+    ]
+    
+    times = []
+    for pattern, replacement in time_patterns:
+        if isinstance(pattern, str):
+            if pattern in text:
+                times.append(replacement)
+        else:
+            matches = re.finditer(pattern, text)
+            for match in matches:
+                times.append(replacement(match))
+    
+    result['time_slots'] = list(set(times))  # 去重
+    
+    # 快速劑量提取
+    dose_match = re.search(r'(\d+)[顆粒錠片]', text)
+    if dose_match:
+        result['dose_quantity'] = f"{dose_match.group(1)}顆"
+    else:
+        result['dose_quantity'] = '1顆'  # 預設值
+    
+    # 快速頻率檢測
+    if '早上' in text and '晚上' in text:
+        result['frequency_name'] = 'BID'
+    elif any(word in text for word in ['每天', '一天一次']):
+        result['frequency_name'] = 'QD'
+    elif '三次' in text:
+        result['frequency_name'] = 'TID'
+    else:
+        result['frequency_name'] = 'QD'
+    
+    return result if result['drug_name'] else None
+
 def parse_text_based_reminder(text: str, api_key: str) -> dict:
     """解析文字形式的用藥提醒"""
     if not api_key:

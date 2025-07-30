@@ -1,8 +1,13 @@
 import os
 import tempfile
 import traceback
+import asyncio
+import concurrent.futures
+import threading
 from io import BytesIO
 from typing import Optional, Tuple
+import hashlib
+import time
 
 from google.cloud import speech
 from pydub import AudioSegment
@@ -14,6 +19,11 @@ from flask import current_app
 
 # 全域變數來追蹤 FFmpeg 警告是否已顯示
 _ffmpeg_warning_shown = False
+
+# 語音快取系統
+_voice_cache = {}
+_cache_lock = threading.Lock()
+CACHE_EXPIRY_SECONDS = 300  # 5分鐘快取
 
 class VoiceService:
     """語音輸入處理服務"""
@@ -34,13 +44,25 @@ class VoiceService:
             語音檔案的bytes內容，失敗時返回None
         """
         try:
+            download_start_time = time.time()
             message_content = line_bot_api.get_message_content(message_id)
-            audio_content = BytesIO()
+            api_call_time = time.time() - download_start_time
             
+            audio_content = BytesIO()
+            bytes_read = 0
+            
+            read_start_time = time.time()
             for chunk in message_content.iter_content():
                 audio_content.write(chunk)
+                bytes_read += len(chunk)
+            read_time = time.time() - read_start_time
             
-            return audio_content.getvalue()
+            result = audio_content.getvalue()
+            total_time = time.time() - download_start_time
+            
+            current_app.logger.info(f"[語音下載] API呼叫: {api_call_time:.3f}秒, 數據讀取: {read_time:.3f}秒, 總計: {total_time:.3f}秒, 大小: {len(result)} bytes")
+            
+            return result
         except Exception as e:
             current_app.logger.error(f"下載語音檔案失敗: {e}")
             return None
@@ -48,7 +70,7 @@ class VoiceService:
     @staticmethod
     def convert_audio_format(audio_bytes: bytes) -> Optional[bytes]:
         """
-        將音檔轉換為Google Speech-to-Text支援的格式
+        優化的音檔格式轉換，使用快取和智能格式檢測
         
         Args:
             audio_bytes: 原始音檔bytes
@@ -56,6 +78,16 @@ class VoiceService:
         Returns:
             轉換後的wav格式bytes，失敗時返回None
         """
+        # 產生快取鍵值
+        cache_key = hashlib.md5(audio_bytes).hexdigest()
+        
+        # 檢查快取
+        with _cache_lock:
+            if cache_key in _voice_cache:
+                cached_data, timestamp = _voice_cache[cache_key]
+                if time.time() - timestamp < CACHE_EXPIRY_SECONDS:
+                    current_app.logger.info("使用快取的音檔轉換結果")
+                    return cached_data
         try:
             # 首先嘗試使用 pydub 進行轉換
             try:
@@ -70,7 +102,19 @@ class VoiceService:
                 audio.export(wav_buffer, format="wav")
                 
                 current_app.logger.info("使用 pydub 成功轉換音頻格式")
-                return wav_buffer.getvalue()
+                result = wav_buffer.getvalue()
+                
+                # 儲存到快取
+                with _cache_lock:
+                    _voice_cache[cache_key] = (result, time.time())
+                    # 清理過期快取
+                    current_time = time.time()
+                    expired_keys = [k for k, (_, ts) in _voice_cache.items() 
+                                  if current_time - ts >= CACHE_EXPIRY_SECONDS]
+                    for k in expired_keys:
+                        del _voice_cache[k]
+                
+                return result
                 
             except Exception as pydub_error:
                 current_app.logger.warning(f"pydub 轉換失敗，嘗試備用方法: {pydub_error}")
@@ -104,7 +148,13 @@ class VoiceService:
                     wav_buffer = BytesIO()
                     audio.export(wav_buffer, format="wav")
                     current_app.logger.info("備用方法轉換成功")
-                    return wav_buffer.getvalue()
+                    result = wav_buffer.getvalue()
+                    
+                    # 儲存到快取
+                    with _cache_lock:
+                        _voice_cache[cache_key] = (result, time.time())
+                    
+                    return result
                 except:
                     # 如果所有轉換都失敗，返回原始音頻讓 API 嘗試處理
                     current_app.logger.info("使用原始音頻格式")
@@ -117,9 +167,76 @@ class VoiceService:
             current_app.logger.error(f"音頻格式轉換失敗: {e}")
             return None
     
+    def transcribe_audio_fast(self, audio_bytes: bytes, language_code: str = "zh-TW") -> Optional[str]:
+        """
+        超快速語音識別，極簡化配置
+        """
+        # 檢查轉錄快取
+        cache_key = f"transcript_{hashlib.md5(audio_bytes).hexdigest()}"
+        with _cache_lock:
+            if cache_key in _voice_cache:
+                cached_data, timestamp = _voice_cache[cache_key]
+                if time.time() - timestamp < CACHE_EXPIRY_SECONDS:
+                    current_app.logger.info("使用快取的語音轉錄結果")
+                    return cached_data
+
+        try:
+            # 最簡化配置，不檢測格式，直接使用最通用設定
+            config = speech.RecognitionConfig(
+                encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+                sample_rate_hertz=16000,
+                language_code=language_code,
+                enable_automatic_punctuation=False,  # 關閉標點符號處理加快速度
+                max_alternatives=1,
+                use_enhanced=False  # 關閉增強模型加快速度
+            )
+            
+            audio = speech.RecognitionAudio(content=audio_bytes)
+            
+            # 執行語音識別
+            response = self.speech_client.recognize(config=config, audio=audio)
+            
+            if response.results:
+                transcript = response.results[0].alternatives[0].transcript
+                confidence = response.results[0].alternatives[0].confidence
+                
+                current_app.logger.info(f"超快速語音識別: '{transcript}' (信心度: {confidence:.2f})")
+                
+                if confidence > 0.3:  # 大幅降低信心度閾值
+                    result = transcript.strip()
+                    # 儲存轉錄結果到快取
+                    with _cache_lock:
+                        _voice_cache[cache_key] = (result, time.time())
+                    return result
+                    
+        except Exception as e:
+            current_app.logger.warning(f"超快速語音識別失敗: {e}")
+        
+        return None
+    
+    def _get_best_encoding_attempt(self, audio_bytes: bytes) -> dict:
+        """
+        根據音檔特徵選擇最佳的編碼格式（單一選擇）
+        """
+        is_wav_format = audio_bytes.startswith(b'RIFF') and b'WAVE' in audio_bytes[:20]
+        
+        if is_wav_format:
+            return {
+                'encoding': speech.RecognitionConfig.AudioEncoding.LINEAR16,
+                'sample_rate_hertz': 16000,
+                'description': 'WAV/LINEAR16'
+            }
+        else:
+            # 非WAV格式，使用最通用的編碼
+            return {
+                'encoding': speech.RecognitionConfig.AudioEncoding.LINEAR16,
+                'sample_rate_hertz': 16000,
+                'description': 'LINEAR16_FAST'
+            }
+
     def transcribe_audio(self, audio_bytes: bytes, language_code: str = "zh-TW") -> Optional[str]:
         """
-        使用Google Speech-to-Text將語音轉換為文字
+        優化的語音轉文字，使用智能格式選擇和快取
         
         Args:
             audio_bytes: 音檔bytes (可能是wav或原始格式)
@@ -128,43 +245,16 @@ class VoiceService:
         Returns:
             轉換後的文字，失敗時返回None
         """
-        # 定義要嘗試的編碼格式列表
-        encoding_attempts = []
-        
-        # 檢測音頻格式
-        is_wav_format = audio_bytes.startswith(b'RIFF') and b'WAVE' in audio_bytes[:20]
-        
-        if is_wav_format:
-            # WAV格式，使用LINEAR16編碼
-            encoding_attempts.append({
-                'encoding': speech.RecognitionConfig.AudioEncoding.LINEAR16,
-                'sample_rate_hertz': 16000,
-                'description': 'WAV/LINEAR16'
-            })
-        else:
-            # 非WAV格式，嘗試多種編碼（按成功率排序）
-            encoding_attempts = [
-                {
-                    'encoding': speech.RecognitionConfig.AudioEncoding.LINEAR16,
-                    'sample_rate_hertz': 16000,
-                    'description': 'LINEAR16_16K'
-                },
-                {
-                    'encoding': speech.RecognitionConfig.AudioEncoding.FLAC,
-                    'sample_rate_hertz': 16000,
-                    'description': 'FLAC'
-                },
-                {
-                    'encoding': speech.RecognitionConfig.AudioEncoding.ENCODING_UNSPECIFIED,
-                    'sample_rate_hertz': None,
-                    'description': 'AUTO_DETECT'
-                },
-                {
-                    'encoding': speech.RecognitionConfig.AudioEncoding.WEBM_OPUS,
-                    'sample_rate_hertz': 48000,
-                    'description': 'WEBM_OPUS'
-                }
-            ]
+        # 檢查轉錄快取
+        cache_key = f"transcript_{hashlib.md5(audio_bytes).hexdigest()}"
+        with _cache_lock:
+            if cache_key in _voice_cache:
+                cached_data, timestamp = _voice_cache[cache_key]
+                if time.time() - timestamp < CACHE_EXPIRY_SECONDS:
+                    current_app.logger.info("使用快取的語音轉錄結果")
+                    return cached_data
+        # 智能格式檢測和優化的編碼嘗試順序
+        encoding_attempts = self._get_optimal_encoding_attempts(audio_bytes)
         
         # 嘗試每種編碼格式
         for attempt in encoding_attempts:
@@ -233,7 +323,11 @@ class VoiceService:
                     
                     # 只有信心度夠高才回傳結果
                     if confidence > 0.6:
-                        return transcript.strip()
+                        result = transcript.strip()
+                        # 儲存轉錄結果到快取
+                        with _cache_lock:
+                            _voice_cache[cache_key] = (result, time.time())
+                        return result
                     else:
                         current_app.logger.warning(f"語音識別信心度過低: {confidence:.2f}, 內容: '{transcript.strip()}', 編碼: {attempt['description']}")
                         continue  # 嘗試下一種編碼
@@ -258,7 +352,7 @@ class VoiceService:
     @staticmethod
     def process_voice_input(user_id: str, audio_bytes: bytes, line_bot_api) -> Tuple[bool, str, dict]:
         """
-        處理語音輸入的完整流程，整合Gemini AI優化
+        激進優化的語音輸入處理流程，目標 < 3秒
         
         Args:
             user_id: 用戶ID
@@ -267,48 +361,144 @@ class VoiceService:
             
         Returns:
             (成功標記, 轉換後的文字或錯誤訊息, 額外數據字典)
-            額外數據包含: menu_command, postback_data, response_message
         """
+        start_time = time.time()
+        
+        # 0. 快速指令檢測（適用於短音檔）
+        quick_command = VoiceService.quick_command_detection(audio_bytes)
+        if quick_command:
+            current_app.logger.info(f"快速指令檢測成功: {quick_command}，耗時: {time.time() - start_time:.2f}秒")
+            return True, quick_command, {'is_menu_command': True, 'menu_command': quick_command}
+        
         voice_service = VoiceService()
         
-        # 1. 轉換音檔格式
+        # 1. 並行處理：音檔轉換 + AI優化準備
+        format_start = time.time()
         wav_bytes = voice_service.convert_audio_format(audio_bytes)
         if not wav_bytes:
             return False, "無法處理此語音格式，請重新錄製", {}
+        format_time = time.time() - format_start
         
-        # 2. 語音轉文字
-        transcript = voice_service.transcribe_audio(wav_bytes)
+        # 2. 使用更快的語音識別設定
+        transcript_start = time.time()
+        transcript = voice_service.transcribe_audio_fast(wav_bytes)
         if not transcript:
-            return False, "無法識別語音內容，請重新錄製或說得更清楚一些", {}
+            return False, "無法識別語音內容，請重新錄製", {}
+        transcript_time = time.time() - transcript_start
         
-        # 3. 使用Gemini AI優化語音識別結果
-        enhanced_transcript = VoiceService._enhance_with_gemini(transcript)
-        final_transcript = enhanced_transcript or transcript
+        # 3. 最小化AI處理 - 只對複雜指令使用
+        enhance_start = time.time()
+        if VoiceService._should_enhance_with_ai(transcript):
+            # 使用更快的AI優化
+            enhanced_transcript = VoiceService._enhance_with_gemini_fast(transcript)
+            final_transcript = enhanced_transcript or transcript
+        else:
+            final_transcript = VoiceService._local_text_optimization(transcript)
+        enhance_time = time.time() - enhance_start
         
-        # 4. 記錄語音識別結果
+        # 4. 非同步記錄（不計入主要時間）
         try:
-            VoiceService._log_voice_recognition(user_id, final_transcript, transcript)
-        except Exception as e:
-            current_app.logger.error(f"記錄語音識別結果失敗: {e}")
+            VoiceService._log_voice_recognition_async(user_id, final_transcript, transcript)
+        except:
+            pass  # 忽略記錄錯誤
         
-        # 5. 檢測是否為選單指令
-        menu_command = VoiceService.detect_menu_command(final_transcript)
+        # 5. 快速檢測選單指令
+        menu_start = time.time()
+        menu_command = VoiceService.detect_menu_command_fast(final_transcript)
         extra_data = {}
         
         if menu_command:
-            # 如果檢測到選單指令，準備相關數據
             extra_data = {
                 'menu_command': menu_command,
                 'postback_data': VoiceService.get_menu_postback_data(menu_command),
                 'response_message': VoiceService.get_menu_response_message(menu_command),
                 'is_menu_command': True
             }
-            current_app.logger.info(f"用戶 {user_id} 語音呼叫選單功能: {menu_command}")
+            
+            # 快取簡單指令結果
+            if len(audio_bytes) < 50000:
+                VoiceService.cache_quick_command(audio_bytes, menu_command)
+            
+            current_app.logger.info(f"用戶 {user_id} 語音呼叫: {menu_command}")
         else:
             extra_data = {'is_menu_command': False}
         
+        menu_time = time.time() - menu_start
+        total_time = time.time() - start_time
+        
+        current_app.logger.info(f"[語音優化] 格式:{format_time:.2f}s, 識別:{transcript_time:.2f}s, 增強:{enhance_time:.2f}s, 選單:{menu_time:.2f}s, 總計:{total_time:.2f}s")
+        
         return True, final_transcript, extra_data
     
+    @staticmethod
+    def _should_enhance_with_ai(transcript: str) -> bool:
+        """
+        判斷是否需要使用AI優化，避免對簡單指令的不必要API呼叫
+        """
+        # 如果是常見的簡單指令，不需要AI優化
+        simple_commands = [
+            "選單", "主選單", "藥單辨識", "藥品辨識", "用藥提醒", 
+            "健康紀錄", "家人綁定", "查詢本人", "查詢家人", "新增提醒"
+        ]
+        
+        transcript_clean = transcript.replace(" ", "").replace("，", "").replace("。", "")
+        
+        for cmd in simple_commands:
+            if cmd in transcript_clean:
+                return False
+        
+        # 如果包含複雜的藥物或時間資訊，則使用AI優化
+        complex_keywords = ["每天", "早上", "晚上", "顆", "粒", "錠", "藥", "點"]
+        return any(keyword in transcript for keyword in complex_keywords)
+
+    @staticmethod
+    def _enhance_with_gemini_fast(transcript: str) -> str:
+        """
+        更快的Gemini AI優化，減少token和處理時間
+        """
+        try:
+            from flask import current_app
+            import google.generativeai as genai
+            
+            api_key = current_app.config.get('GEMINI_API_KEY')
+            if not api_key:
+                return VoiceService._local_text_optimization(transcript)
+            
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-2.5-flash')
+            
+            # 最簡化的提示詞
+            prompt = f"修正錯字: {transcript}"
+            
+            response = model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.01,        # 最低溫度提高一致性
+                    top_p=0.9,
+                    top_k=20,               # 減少選擇範圍
+                    candidate_count=1,
+                    max_output_tokens=50    # 最小化token數量
+                ),
+                safety_settings=[
+                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+                ]
+            )
+            
+            enhanced_text = response.text.strip() if response.text else ""
+            
+            if enhanced_text and 0.5 * len(transcript) <= len(enhanced_text) <= 1.5 * len(transcript):
+                current_app.logger.info(f"Gemini快速優化: '{transcript}' → '{enhanced_text}'")
+                return enhanced_text
+            else:
+                return VoiceService._local_text_optimization(transcript)
+                
+        except Exception as e:
+            current_app.logger.warning(f"Gemini快速優化失敗: {e}")
+            return VoiceService._local_text_optimization(transcript)
+
     @staticmethod
     def _enhance_with_gemini(transcript: str) -> str:
         """
@@ -441,6 +631,135 @@ class VoiceService:
             current_app.logger.error(f"本地語音優化失敗: {e}")
             return transcript
 
+    def _get_optimal_encoding_attempts(self, audio_bytes: bytes) -> list:
+        """
+        根據音檔特徵選擇最佳的編碼嘗試順序
+        """
+        # 檢測音頻格式
+        is_wav_format = audio_bytes.startswith(b'RIFF') and b'WAVE' in audio_bytes[:20]
+        is_m4a_format = audio_bytes[4:8] == b'ftyp'
+        
+        if is_wav_format:
+            # WAV格式，直接使用LINEAR16
+            return [{
+                'encoding': speech.RecognitionConfig.AudioEncoding.LINEAR16,
+                'sample_rate_hertz': 16000,
+                'description': 'WAV/LINEAR16'
+            }]
+        elif is_m4a_format:
+            # M4A格式（LINE常用），優先嘗試這些編碼
+            return [
+                {
+                    'encoding': speech.RecognitionConfig.AudioEncoding.LINEAR16,
+                    'sample_rate_hertz': 16000,
+                    'description': 'M4A_TO_LINEAR16'
+                },
+                {
+                    'encoding': speech.RecognitionConfig.AudioEncoding.ENCODING_UNSPECIFIED,
+                    'sample_rate_hertz': None,
+                    'description': 'M4A_AUTO_DETECT'
+                }
+            ]
+        else:
+            # 其他格式，使用通用嘗試列表
+            return [
+                {
+                    'encoding': speech.RecognitionConfig.AudioEncoding.ENCODING_UNSPECIFIED,
+                    'sample_rate_hertz': None,
+                    'description': 'AUTO_DETECT'
+                },
+                {
+                    'encoding': speech.RecognitionConfig.AudioEncoding.LINEAR16,
+                    'sample_rate_hertz': 16000,
+                    'description': 'LINEAR16_16K'
+                },
+                {
+                    'encoding': speech.RecognitionConfig.AudioEncoding.FLAC,
+                    'sample_rate_hertz': 16000,
+                    'description': 'FLAC'
+                }
+            ]
+
+    @staticmethod
+    def _log_voice_recognition_async(user_id: str, transcript: str, original_transcript: str = None):
+        """
+        非同步記錄語音識別結果，使用簡化的方法避免上下文問題
+        """
+        def log_in_thread():
+            try:
+                # 使用簡化的資料庫連接，避免 Flask 上下文問題
+                import pymysql
+                from flask import current_app
+                
+                # 嘗試獲取資料庫配置
+                try:
+                    # 如果有應用程式上下文，使用配置
+                    db_config = {
+                        'host': current_app.config.get('DB_HOST'),
+                        'user': current_app.config.get('DB_USER'),
+                        'password': current_app.config.get('DB_PASSWORD'),
+                        'database': current_app.config.get('DB_NAME'),
+                        'port': current_app.config.get('DB_PORT', 3306),
+                        'charset': 'utf8mb4'
+                    }
+                except RuntimeError:
+                    # 如果沒有應用程式上下文，使用環境變數
+                    import os
+                    db_config = {
+                        'host': os.environ.get('DB_HOST'),
+                        'user': os.environ.get('DB_USER'),  
+                        'password': os.environ.get('DB_PASS'),
+                        'database': os.environ.get('DB_NAME'),
+                        'port': int(os.environ.get('DB_PORT', 3306)),
+                        'charset': 'utf8mb4'
+                    }
+                
+                # 檢查必要的配置是否存在
+                if not all([db_config['host'], db_config['user'], db_config['password'], db_config['database']]):
+                    print("語音記錄: 資料庫配置不完整，跳過記錄")
+                    return
+                
+                # 建立資料庫連接
+                connection = pymysql.connect(**db_config)
+                cursor = connection.cursor()
+                
+                # 確保表存在
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS voice_recognition_logs (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        user_id VARCHAR(255) NOT NULL COMMENT 'LINE用戶ID',
+                        transcript TEXT NOT NULL COMMENT '最終語音識別結果文字',
+                        original_transcript TEXT DEFAULT NULL COMMENT '原始語音識別結果',
+                        confidence_score DECIMAL(4,3) DEFAULT NULL COMMENT '識別信心度',
+                        enhanced_by_ai BOOLEAN DEFAULT FALSE COMMENT '是否經過AI優化',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '創建時間',
+                        INDEX idx_user_id (user_id),
+                        INDEX idx_created_at (created_at)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """)
+                
+                # 插入記錄
+                enhanced_by_ai = original_transcript is not None and original_transcript != transcript
+                cursor.execute("""
+                    INSERT INTO voice_recognition_logs 
+                    (user_id, transcript, original_transcript, enhanced_by_ai, created_at)
+                    VALUES (%s, %s, %s, %s, NOW())
+                """, (user_id, transcript, original_transcript, enhanced_by_ai))
+                
+                connection.commit()
+                cursor.close()
+                connection.close()
+                
+                print(f"語音識別記錄已保存: {user_id} -> {transcript[:50]}...")
+                
+            except Exception as e:
+                print(f"記錄語音識別失敗: {e}")
+                import traceback
+                print(f"錯誤詳情: {traceback.format_exc()}")
+        
+        # 在背景執行緒中執行
+        threading.Thread(target=log_in_thread, daemon=True).start()
+
     @staticmethod
     def _log_voice_recognition(user_id: str, transcript: str, original_transcript: str = None):
         """記錄語音識別結果到資料庫，包含原始和優化後的結果"""
@@ -481,6 +800,73 @@ class VoiceService:
             current_app.logger.error(f"記錄語音識別失敗: {e}")
             # 不影響主要功能，繼續執行
     
+    @staticmethod
+    def quick_command_detection(audio_bytes: bytes) -> str:
+        """
+        快速指令檢測，適用於短音檔
+        
+        Args:
+            audio_bytes: 音檔bytes
+            
+        Returns:
+            如果檢測到快速指令則返回指令，否則返回None
+        """
+        # 檢查音檔大小，小於50KB的音檔可能是短指令
+        if len(audio_bytes) > 50000:
+            return None
+            
+        # 檢查快取中是否有這個音檔的結果
+        cache_key = f"quick_cmd_{hashlib.md5(audio_bytes).hexdigest()}"
+        with _cache_lock:
+            if cache_key in _voice_cache:
+                cached_data, timestamp = _voice_cache[cache_key]
+                if time.time() - timestamp < CACHE_EXPIRY_SECONDS:
+                    current_app.logger.info("使用快取的快速指令結果")
+                    return cached_data
+        
+        # 對於非常短的音檔（小於20KB），跳過處理
+        if len(audio_bytes) < 20000:
+            return None
+            
+        return None  # 暫時返回None，讓主要流程處理
+    
+    @staticmethod
+    def cache_quick_command(audio_bytes: bytes, command: str):
+        """
+        快取快速指令結果
+        
+        Args:
+            audio_bytes: 音檔bytes
+            command: 檢測到的指令
+        """
+        cache_key = f"quick_cmd_{hashlib.md5(audio_bytes).hexdigest()}"
+        with _cache_lock:
+            _voice_cache[cache_key] = (command, time.time())
+
+    @staticmethod  
+    def detect_menu_command_fast(transcript: str) -> str:
+        """
+        快速檢測語音中的選單呼叫指令，使用簡化的匹配
+        """
+        # 只保留最常用的指令，減少檢查時間
+        clean_text = transcript.replace(" ", "").replace("，", "").replace("。", "")
+        
+        # 簡化的指令匹配（按使用頻率排序）
+        fast_commands = {
+            "reminder": ["新增提醒", "設定提醒", "用藥提醒", "提醒我吃", "幫我新增"],
+            "prescription_scan": ["藥單辨識", "掃描藥單", "辨識藥單"],
+            "pill_scan": ["藥品辨識", "這是什麼藥"],
+            "query_self_reminders": ["查詢本人", "我的提醒"],
+            "health": ["健康紀錄", "記錄體重", "記錄血壓"]
+        }
+        
+        for menu_type, commands in fast_commands.items():
+            for command in commands:
+                if command in clean_text:
+                    return menu_type
+        
+        return None
+
     @staticmethod  
     def detect_menu_command(transcript: str) -> str:
         """

@@ -3,7 +3,7 @@
 from linebot.models import (
     FlexSendMessage, BubbleContainer, CarouselContainer, BoxComponent,
     TextComponent, ButtonComponent, SeparatorComponent,
-    PostbackAction, MessageAction, URIAction
+    PostbackAction, MessageAction, URIAction, ImageComponent
 )
 from urllib.parse import quote
 from flask import current_app
@@ -23,11 +23,19 @@ def create_reminder_management_menu():
             padding_all='16px'
         ),
         body=BoxComponent(
-            layout='vertical', padding_all='20px', spacing='xl',
+            layout='vertical', padding_all='16px', spacing='xl',
             contents=[
                 BoxComponent(
                     layout='vertical', margin='lg', spacing='md',
                     contents=[
+                        ImageComponent(
+                            url='https://storage.googleapis.com/pill_test_0721/%E7%94%A8%E8%97%A5%E6%8F%90%E9%86%92_new.png',  # ✅ 這裡換成你要的圖片網址
+                            size='xl',
+                            aspect_mode='cover',
+                            align='center',
+                            margin='none'
+                        ),
+
                         BoxComponent(
                             layout='vertical',
                             padding_all='lg',
@@ -48,8 +56,8 @@ def create_reminder_management_menu():
                                     weight='bold',
                                     size='lg',
                                     margin='xs')
-                                ]
-                            ),
+                            ]
+                        ),
                         BoxComponent(
                             layout='vertical',
                             padding_all='lg',
@@ -91,16 +99,31 @@ def create_reminder_management_menu():
         header=BoxComponent(
             layout='vertical',
             contents=[
-                TextComponent(text='🎤 語音快捷鍵說明', weight='bold', size='lg', color='#1F2D3D', align='center')
+                TextComponent(text='🎙️ 語音快捷鍵說明', weight='bold', size='lg', color='#1F2D3D', align='center')
             ],
             background_color='#FFE4B5',
             padding_all='16px'
         ),
         body=BoxComponent(
             layout='vertical',
-            padding_all='18px',
+            padding_all='16px',
             spacing='md',
             contents=[
+                # 使用提示
+                BoxComponent(
+                    layout='vertical',
+                    background_color='#F3E5F5',
+                    corner_radius='12px',
+                    padding_all='12px',
+                    margin='sm',
+                    contents=[
+                        TextComponent(text='💡 使用提示', weight='bold', size='md', color='#6A1B9A'),
+                        TextComponent(text='• 點擊 LINE 聊天室中的麥克風 🎙️，', size='xs', color='#424242', margin='xs'),
+                        TextComponent(text='   說話後點擊發送即可啟動語音輸入', size='xs', color='#424242'),
+                        TextComponent(text='• 支援中文語音識別', size='xs', color='#424242')
+                    ]
+                ),
+                
                 # 語音用藥提醒設定
                 BoxComponent(
                     layout='vertical',
@@ -109,10 +132,11 @@ def create_reminder_management_menu():
                     padding_all='12px',
                     margin='sm',
                     contents=[
-                        TextComponent(text='💊 語音用藥提醒設定', weight='bold', size='md', color='#E65100'),
-                        TextComponent(text='語音輸入範例：', size='sm', color='#BF360C', margin='xs'),
-                        TextComponent(text='"新增用藥提醒，普拿疼，飯後吃，每次一顆"', size='xs', color='#424242', wrap=True, margin='xs'),
-                        TextComponent(text='"提醒我每天早上八點吃一顆血壓藥"', size='xs', color='#424242', wrap=True, margin='xs')
+                        TextComponent(text='💊 「用藥提醒設定」語音輸入', weight='bold', size='md', color='#E65100'),
+                        # TextComponent(text='語音輸入範例：', size='sm', color='#BF360C', margin='xs'),
+                        TextComponent(text='"新增用藥提醒，普拿疼，早上九點，', size='xs', color='#424242', wrap=True, margin='xs'),
+                        TextComponent(text='  每次一顆"', size='xs', color='#424242', wrap=True, margin='xs'),
+                        TextComponent(text='"提醒我每天早晚八點吃一顆血壓藥"', size='xs', color='#424242', wrap=True, margin='xs')
                     ]
                 ),
                 
@@ -124,8 +148,8 @@ def create_reminder_management_menu():
                     padding_all='12px',
                     margin='sm',
                     contents=[
-                        TextComponent(text='👨‍👩‍👧‍👦 語音新增家人', weight='bold', size='md', color='#2E7D32'),
-                        TextComponent(text='語音輸入範例：', size='sm', color='#1B5E20', margin='xs'),
+                        TextComponent(text='👨‍👩‍👧‍👦 「新增家人」語音輸入', weight='bold', size='md', color='#2E7D32'),
+                        # TextComponent(text='語音輸入範例：', size='sm', color='#1B5E20', margin='xs'),
                         TextComponent(text='"新增提醒對象媽媽"', size='xs', color='#424242', wrap=True, margin='xs'),
                         TextComponent(text='"新增家人爸爸"', size='xs', color='#424242', wrap=True, margin='xs')
                     ]
@@ -139,27 +163,13 @@ def create_reminder_management_menu():
                     padding_all='12px',
                     margin='sm',
                     contents=[
-                        TextComponent(text='🔍 語音查詢功能', weight='bold', size='md', color='#1565C0'),
-                        TextComponent(text='語音輸入範例：', size='sm', color='#0D47A1', margin='xs'),
+                        TextComponent(text='🔍 「查詢功能」語音輸入', weight='bold', size='md', color='#1565C0'),
+                        # TextComponent(text='語音輸入範例：', size='sm', color='#0D47A1', margin='xs'),
                         TextComponent(text='"查詢本人的用藥提醒"', size='xs', color='#424242', wrap=True, margin='xs'),
                         TextComponent(text='"查詢家人的用藥提醒"', size='xs', color='#424242', wrap=True, margin='xs')
                     ]
-                ),
-                
-                # 使用提示
-                BoxComponent(
-                    layout='vertical',
-                    background_color='#F3E5F5',
-                    corner_radius='12px',
-                    padding_all='12px',
-                    margin='sm',
-                    contents=[
-                        TextComponent(text='💡 使用提示', weight='bold', size='sm', color='#6A1B9A'),
-                        TextComponent(text='• 直接對著手機說話即可', size='xs', color='#424242', margin='xs'),
-                        TextComponent(text='• 說話清楚，語速適中', size='xs', color='#424242'),
-                        TextComponent(text='• 支援中文語音識別', size='xs', color='#424242')
-                    ]
                 )
+                                
             ]
         )
     )

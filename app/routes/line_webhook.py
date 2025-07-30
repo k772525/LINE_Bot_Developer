@@ -4,6 +4,7 @@ from flask import Blueprint, request, abort, current_app
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, PostbackEvent, FollowEvent, TextMessage, ImageMessage, AudioMessage, TextSendMessage, FlexSendMessage, QuickReply, QuickReplyButton, MessageAction
 import traceback
+import time
 
 from app import handler, line_bot_api
 from .handlers import prescription_handler
@@ -75,6 +76,10 @@ def handle_message_dispatcher(event):
 
     # 【新增】處理語音訊息
     if isinstance(event.message, AudioMessage):
+        # 記錄語音處理開始時間
+        voice_start_time = time.time()
+        current_app.logger.info(f"[語音處理] 開始處理用戶 {user_id} 的語音訊息 (ID: {event.message.id})")
+        
         # 檢查是否啟用語音功能
         if not current_app.config.get('SPEECH_TO_TEXT_ENABLED', True):
             line_bot_api.reply_message(event.reply_token, 
@@ -82,68 +87,93 @@ def handle_message_dispatcher(event):
             return
         
         # 發送處理中訊息
+        reply_start_time = time.time()
         line_bot_api.reply_message(event.reply_token, 
             TextSendMessage(text="🎙️ 正在處理您的語音訊息，請稍候..."))
+        reply_time = time.time() - reply_start_time
+        current_app.logger.info(f"[語音處理] 回復處理中訊息耗時: {reply_time:.3f}秒")
         
         # 下載並處理語音檔案
+        download_start_time = time.time()
         audio_content = VoiceService.download_audio_content(event.message.id, line_bot_api)
+        download_time = time.time() - download_start_time
+        
         if not audio_content:
+            error_time = time.time() - voice_start_time
+            current_app.logger.error(f"[語音處理] 下載失敗，總耗時: {error_time:.3f}秒")
             line_bot_api.push_message(user_id,
                 TextSendMessage(text="❌ 無法下載語音檔案，請重新錄製"))
             return
         
+        current_app.logger.info(f"[語音處理] 音檔下載完成，大小: {len(audio_content)} bytes，耗時: {download_time:.3f}秒")
+        
         # 處理語音輸入
+        processing_start_time = time.time()
         success, result, extra_data = VoiceService.process_voice_input(user_id, audio_content, line_bot_api)
+        processing_time = time.time() - processing_start_time
+        
+        current_app.logger.info(f"[語音處理] 語音轉文字處理完成，耗時: {processing_time:.3f}秒，結果: {success}")
         
         if success:
             # 語音轉文字成功
-            current_app.logger.info(f"語音轉文字成功: {result}")
+            business_logic_start_time = time.time()
+            current_app.logger.info(f"[語音處理] 語音轉文字成功: {result}")
             
             # 檢查是否為語音新增提醒對象指令（最高優先級）
+            member_check_start_time = time.time()
             add_member_data = VoiceService.parse_add_member_command(result)
+            member_check_time = time.time() - member_check_start_time
+            
             if add_member_data['is_add_member_command']:
                 member_name = add_member_data['member_name']
                 command_type = add_member_data['command_type']
                 
-                current_app.logger.info(f"語音新增提醒對象指令: 名稱={member_name}, 類型={command_type}")
+                current_app.logger.info(f"[語音處理] 語音新增提醒對象指令: 名稱={member_name}, 類型={command_type}, 解析耗時: {member_check_time:.3f}秒")
                 
                 # 處理新增成員指令
-                try:
-                    success, message, extra_info = VoiceService.process_add_member_command(user_id, member_name, command_type)
-                    
-                    # 確保 message 是有效的字串
-                    if message and isinstance(message, str):
-                        line_bot_api.push_message(user_id, TextSendMessage(text=message))
-                    else:
-                        # 如果 message 無效，發送預設錯誤訊息
-                        current_app.logger.error(f"語音新增成員返回無效訊息: {message}")
-                        fallback_msg = f"❌ 處理語音指令時發生錯誤，請稍後再試。"
-                        line_bot_api.push_message(user_id, TextSendMessage(text=fallback_msg))
-                        
-                except Exception as e:
-                    current_app.logger.error(f"處理語音新增成員指令時發生異常: {e}")
-                    import traceback
-                    current_app.logger.error(f"異常詳情: {traceback.format_exc()}")
-                    
-                    # 發送用戶友好的錯誤訊息
-                    error_msg = f"❌ 新增成員「{member_name}」時發生錯誤，請稍後再試。"
-                    line_bot_api.push_message(user_id, TextSendMessage(text=error_msg))
+                member_process_start_time = time.time()
+                success, message, extra_info = VoiceService.process_add_member_command(user_id, member_name, command_type)
+                member_process_time = time.time() - member_process_start_time
                 
+                # 發送結果
+                response_start_time = time.time()
+                line_bot_api.push_message(user_id, TextSendMessage(text=message))
+                response_time = time.time() - response_start_time
+                
+                total_time = time.time() - voice_start_time
+                current_app.logger.info(f"[語音處理] 新增成員完成 - 處理: {member_process_time:.3f}秒, 發送: {response_time:.3f}秒, 總耗時: {total_time:.3f}秒")
                 return
             
             # 先檢查是否為用藥提醒指令（優先於選單指令）
-            api_key = current_app.config.get('GEMINI_API_KEY')
-            parsed_data = parse_text_based_reminder(result, api_key)
+            reminder_parse_start_time = time.time()
+            
+            # 優先使用超快速本地解析
+            from app.services.ai_processor import parse_text_based_reminder_ultra_fast
+            parsed_data = parse_text_based_reminder_ultra_fast(result)
+            
+            # 如果本地解析失敗，才使用AI解析
+            if not parsed_data:
+                api_key = current_app.config.get('GEMINI_API_KEY')
+                parsed_data = parse_text_based_reminder(result, api_key)
+            
+            reminder_parse_time = time.time() - reminder_parse_start_time
+            
+            current_app.logger.info(f"[語音處理] 用藥提醒解析耗時: {reminder_parse_time:.3f}秒")
 
             if parsed_data and parsed_data.get('drug_name'):
                 # 如果成功解析出藥物名稱，則視為用藥提醒指令
-                current_app.logger.info(f"語音識別為用藥提醒指令: {parsed_data}")
+                current_app.logger.info(f"[語音處理] 語音識別為用藥提醒指令: {parsed_data}")
                 
                 # 檢查是否指定了特定成員
+                member_extract_start_time = time.time()
                 target_member = _extract_member_from_voice(user_id, result)
+                member_extract_time = time.time() - member_extract_start_time
+                
+                current_app.logger.info(f"[語音處理] 成員提取耗時: {member_extract_time:.3f}秒, 結果: {target_member}")
                 
                 if target_member:
                     # 已指定成員，直接創建提醒
+                    reminder_create_start_time = time.time()
                     parsed_data['target_member'] = target_member
                     
                     # 直接使用 ReminderService.create_reminder_from_voice 創建提醒
@@ -170,17 +200,22 @@ def handle_message_dispatcher(event):
                     )
                     
                     if reminder_id:
+                        reminder_create_time = time.time() - reminder_create_start_time
+                        current_app.logger.info(f"[語音處理] 提醒創建耗時: {reminder_create_time:.3f}秒")
+                        
                         # 創建成功，直接顯示提醒卡片
-                        current_app.logger.info(f"語音提醒處理成功，ID: {reminder_id}")
+                        current_app.logger.info(f"[語音處理] 語音提醒處理成功，ID: {reminder_id}")
                         
                         # 發送立即的成功訊息（可能是新增或更新）
+                        success_message_start_time = time.time()
                         immediate_success_msg = f"✅ 語音用藥提醒設定成功！\n\n👤 對象：{target_member}\n💊 藥物：{drug_name}\n⏰ 時間：{', '.join(time_slots) if time_slots else '預設時間'}\n📅 頻率：{frequency_name}\n\n🔄 正在為您顯示提醒列表..."
                         line_bot_api.push_message(user_id, TextSendMessage(text=immediate_success_msg))
+                        success_message_time = time.time() - success_message_start_time
                         
                         # 稍微延遲後顯示卡片，確保資料庫事務完成
-                        import time
                         time.sleep(0.5)
                         
+                        card_display_start_time = time.time()
                         try:
                             from app.utils.flex import reminder as flex_reminder
                             
@@ -205,22 +240,16 @@ def handle_message_dispatcher(event):
                                     try:
                                         flex_message = flex_reminder.create_reminder_list_carousel(target_member_data, reminders, liff_id)
                                         line_bot_api.push_message(user_id, flex_message)
-                                        current_app.logger.info(f"✅ 語音設定提醒成功 - 已顯示「{target_member}」的提醒卡片")
+                                        card_display_time = time.time() - card_display_start_time
+                                        total_time = time.time() - voice_start_time
+                                        current_app.logger.info(f"[語音處理] 提醒卡片顯示成功 - 卡片耗時: {card_display_time:.3f}秒, 總耗時: {total_time:.3f}秒")
                                         return  # 成功顯示卡片，直接返回
                                     except Exception as carousel_error:
                                         current_app.logger.error(f"❌ 創建提醒卡片失敗: {carousel_error}")
                                         import traceback
                                         current_app.logger.error(f"詳細錯誤: {traceback.format_exc()}")
                                 elif not reminders:
-                                    current_app.logger.warning(f"⚠️ 無法取得用戶 {user_id} 成員「{target_member}」的提醒列表，可能是資料庫同步問題")
-                                    # 嘗試直接查詢確認
-                                    from app.utils.db import get_db_connection
-                                    db = get_db_connection()
-                                    if db:
-                                        with db.cursor() as cursor:
-                                            cursor.execute("SELECT COUNT(*) as count FROM medicine_schedule WHERE recorder_id = %s AND member = %s", (user_id, target_member))
-                                            count_result = cursor.fetchone()
-                                            current_app.logger.info(f"🔍 直接查詢資料庫結果: 用戶 {user_id} 成員「{target_member}」有 {count_result['count'] if count_result else 0} 筆提醒")
+                                    current_app.logger.warning(f"⚠️ 無法取得用戶 {user_id} 成員「{target_member}」的提醒列表")
                                 else:
                                     current_app.logger.error("❌ 無法取得 LIFF_ID_MANUAL_REMINDER 配置")
                             else:
@@ -234,22 +263,35 @@ def handle_message_dispatcher(event):
                         # 如果執行到這裡，表示卡片顯示失敗，發送說明訊息
                         fallback_msg = f"💡 您為「{target_member}」設定的「{drug_name}」提醒已完成。\n\n請點選「用藥提醒」→「新增/查詢提醒」→「{target_member}」查看所有提醒。"
                         line_bot_api.push_message(user_id, TextSendMessage(text=fallback_msg))
+                        
+                        total_time = time.time() - voice_start_time
+                        current_app.logger.info(f"[語音處理] 提醒設定完成(備用訊息) - 總耗時: {total_time:.3f}秒")
                     else:
-                        current_app.logger.error("❌ 語音提醒設定失敗，reminder_id 為 None")
+                        reminder_create_time = time.time() - reminder_create_start_time
+                        total_time = time.time() - voice_start_time
+                        current_app.logger.error(f"[語音處理] 語音提醒設定失敗，reminder_id 為 None - 處理耗時: {reminder_create_time:.3f}秒, 總耗時: {total_time:.3f}秒")
                         line_bot_api.push_message(user_id, TextSendMessage(text="❌ 設定提醒失敗，請稍後再試或使用選單功能手動新增。"))
                 else:
                     # 未指定成員，顯示成員選擇選單
+                    member_selection_start_time = time.time()
                     _show_member_selection_for_voice_reminder(user_id, parsed_data, line_bot_api)
+                    member_selection_time = time.time() - member_selection_start_time
+                    
+                    total_time = time.time() - voice_start_time
+                    current_app.logger.info(f"[語音處理] 成員選擇選單顯示完成 - 處理耗時: {member_selection_time:.3f}秒, 總耗時: {total_time:.3f}秒")
                 return
             
             # 檢查是否為選單指令
+            menu_check_start_time = time.time()
             if extra_data.get('is_menu_command', False):
                 menu_command = extra_data.get('menu_command')
                 postback_data = extra_data.get('postback_data')
+                menu_check_time = time.time() - menu_check_start_time
                 
-                current_app.logger.info(f"處理語音選單指令: {menu_command}, postback_data: {postback_data}")
+                current_app.logger.info(f"[語音處理] 選單指令檢測耗時: {menu_check_time:.3f}秒, 指令: {menu_command}")
                 
                 # 處理不同類型的語音選單指令
+                menu_process_start_time = time.time()
                 if menu_command == 'query_self_reminders':
                     # 查詢本人提醒 - 語音指令處理
                     try:
@@ -354,10 +396,17 @@ def handle_message_dispatcher(event):
                     return
 
             # 如果不是選單指令，提供通用幫助
+            help_start_time = time.time()
             help_message = f"🎙️ 收到您的語音：「{result}」\n\n我不太確定如何處理這個指令。您可以試試說：\n- 「新增提醒，血壓藥，每天早上8點吃一顆」\n- 「藥單辨識」\n- 「主選單」"
             line_bot_api.push_message(user_id, TextSendMessage(text=help_message))
+            
+            help_time = time.time() - help_start_time
+            total_time = time.time() - voice_start_time
+            current_app.logger.info(f"[語音處理] 提供通用幫助 - 處理耗時: {help_time:.3f}秒, 總耗時: {total_time:.3f}秒")
         else:
             # 語音轉文字失敗
+            error_time = time.time() - voice_start_time
+            current_app.logger.error(f"[語音處理] 語音轉文字失敗 - 總耗時: {error_time:.3f}秒, 錯誤: {result}")
             line_bot_api.push_message(user_id, TextSendMessage(text=f"❌ {result}"))
         return
 
@@ -372,7 +421,7 @@ def handle_message_dispatcher(event):
         # 在函數內部導入，避免作用域問題
         try:
             from .handlers import reminder_handler as rh
-            return rh.handle(event)
+            rh.handle(event)
         except ImportError:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="❌ 用藥提醒功能暫時無法使用"))
 
