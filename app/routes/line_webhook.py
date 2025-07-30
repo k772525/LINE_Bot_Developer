@@ -144,7 +144,153 @@ def handle_message_dispatcher(event):
                 current_app.logger.info(f"[語音處理] 新增成員完成 - 處理: {member_process_time:.3f}秒, 發送: {response_time:.3f}秒, 總耗時: {total_time:.3f}秒")
                 return
             
-            # 先檢查是否為用藥提醒指令（優先於選單指令）
+            # 檢查是否為選單指令（優先檢查，避免不必要的AI解析）
+            menu_check_start_time = time.time()
+            if extra_data.get('is_menu_command', False):
+                menu_command = extra_data.get('menu_command')
+                postback_data = extra_data.get('postback_data')
+                menu_check_time = time.time() - menu_check_start_time
+                
+                current_app.logger.info(f"[語音處理] 選單指令檢測耗時: {menu_check_time:.3f}秒, 指令: {menu_command}")
+                
+                # 處理不同類型的語音選單指令
+                menu_process_start_time = time.time()
+                if menu_command == 'query_self_reminders':
+                    # 查詢本人提醒 - 語音指令處理（優化版）
+                    try:
+                        from app.utils.flex import reminder as flex_reminder
+                        from app.services.reminder_service import ReminderService
+                        
+                        # 確保用戶存在並獲取成員
+                        UserService.get_or_create_user(user_id)
+                        members = UserService.get_user_members(user_id)
+                        
+                        # 找到本人的成員資料
+                        target_member = next((m for m in members if m['member'] == '本人'), None)
+                        
+                        if target_member:
+                            # 獲取本人的提醒列表
+                            reminders = ReminderService.get_reminders_for_member(user_id, "本人")
+                            
+                            if reminders and len(reminders) > 0:
+                                # 有提醒記錄，優先顯示卡片
+                                liff_id = current_app.config.get('LIFF_ID_MANUAL_REMINDER')
+                                if liff_id:
+                                    flex_message = flex_reminder.create_reminder_list_carousel(target_member, reminders, liff_id)
+                                    line_bot_api.push_message(user_id, flex_message)
+                                    current_app.logger.info("語音查詢本人提醒成功 - 顯示卡片")
+                                else:
+                                    # LIFF ID 未配置，發送文字訊息
+                                    reminder_text = f"📋 您目前有 {len(reminders)} 筆用藥提醒：\n\n"
+                                    for i, reminder in enumerate(reminders[:5], 1):
+                                        reminder_text += f"{i}. {reminder.get('drug_name', '未知藥物')} - {reminder.get('frequency_name', '未設定頻率')}\n"
+                                    if len(reminders) > 5:
+                                        reminder_text += f"\n...還有 {len(reminders) - 5} 筆提醒"
+                                    line_bot_api.push_message(user_id, TextSendMessage(text=reminder_text))
+                                    current_app.logger.info("語音查詢本人提醒成功 - 文字列表")
+                            else:
+                                # 沒有提醒記錄
+                                line_bot_api.push_message(user_id, TextSendMessage(
+                                    text="📋 您目前沒有設定任何用藥提醒。\n\n💡 您可以說「新增提醒」或使用「用藥提醒」選單來建立提醒。"
+                                ))
+                        else:
+                            # 找不到本人成員，自動創建
+                            from app.utils.db import DB
+                            DB.add_member(user_id, "本人")
+                            line_bot_api.push_message(user_id, TextSendMessage(
+                                text="📋 已為您初始化個人資料。\n\n目前沒有用藥提醒，您可以說「新增提醒」來建立第一筆提醒。"
+                            ))
+                        
+                    except Exception as e:
+                        current_app.logger.error(f"語音查詢本人提醒失敗: {e}")
+                        line_bot_api.push_message(user_id, TextSendMessage(text="❌ 查詢提醒時發生錯誤，請稍後再試"))
+                    
+                    return
+                
+                elif menu_command == 'query_family_reminders':
+                    # 查詢家人提醒 - 顯示成員管理選單（優化版）
+                    try:
+                        from app.utils.flex import reminder as flex_reminder
+                        from app.services.reminder_service import ReminderService
+                        
+                        # 快速獲取成員摘要資訊
+                        members_summary = ReminderService.get_members_with_reminder_summary(user_id)
+                        liff_id = current_app.config['LIFF_ID_MANUAL_REMINDER']
+                        
+                        if members_summary:
+                            flex_message = flex_reminder.create_member_management_carousel(members_summary, liff_id)
+                            line_bot_api.push_message(user_id, flex_message)
+                            current_app.logger.info("語音查詢家人提醒成功 - 顯示管理選單")
+                        else:
+                            # 沒有成員資料
+                            line_bot_api.push_message(user_id, TextSendMessage(
+                                text="📋 目前沒有提醒對象。\n\n💡 您可以說「新增提醒」來建立第一筆提醒。"
+                            ))
+                        
+                    except Exception as e:
+                        current_app.logger.error(f"語音查詢家人提醒失敗: {e}")
+                        line_bot_api.push_message(user_id, TextSendMessage(text="❌ 查詢家人提醒時發生錯誤，請稍後再試"))
+                    
+                    return
+                
+                elif menu_command == 'reminder':
+                    # 特殊處理：對於提醒指令，需要檢查是否包含具體藥物資訊
+                    # 如果包含藥物資訊，應該進行詳細解析而不是只顯示選單
+                    try:
+                        from app.services.ai_processor import parse_text_based_reminder_ultra_fast
+                        parsed_data = parse_text_based_reminder_ultra_fast(result)
+                        
+                        if parsed_data and parsed_data.get('drug_name'):
+                            # 包含具體藥物資訊，跳出選單處理，讓後面的用藥提醒邏輯處理
+                            current_app.logger.info(f"語音包含具體藥物資訊，進行詳細解析: {parsed_data}")
+                            # 不 return，讓程式繼續執行到用藥提醒解析邏輯
+                        else:
+                            # 沒有具體藥物資訊，顯示提醒選單
+                            from urllib.parse import parse_qs
+                            
+                            class MockEvent:
+                                def __init__(self, user_id, postback_data):
+                                    self.source = type('obj', (object,), {'user_id': user_id})
+                                    self.reply_token = None
+                                    self.postback = type('obj', (object,), {'data': postback_data})
+                            
+                            mock_event = MockEvent(user_id, postback_data)
+                            handle_voice_menu_postback(mock_event, menu_command)
+                            return
+                    except Exception as e:
+                        current_app.logger.error(f"處理語音提醒指令錯誤: {e}")
+                        # 發生錯誤時，顯示提醒選單
+                        from urllib.parse import parse_qs
+                        
+                        class MockEvent:
+                            def __init__(self, user_id, postback_data):
+                                self.source = type('obj', (object,), {'user_id': user_id})
+                                self.reply_token = None
+                                self.postback = type('obj', (object,), {'data': postback_data})
+                        
+                        mock_event = MockEvent(user_id, postback_data)
+                        handle_voice_menu_postback(mock_event, menu_command)
+                        return
+                
+                elif menu_command in ['prescription_scan', 'pill_scan', 'family', 'history', 'health']:
+                    # 其他選單指令 - 使用原有的 postback 處理邏輯
+                    from urllib.parse import parse_qs
+                    
+                    class MockEvent:
+                        def __init__(self, user_id, postback_data):
+                            self.source = type('obj', (object,), {'user_id': user_id})
+                            self.reply_token = None
+                            self.postback = type('obj', (object,), {'data': postback_data})
+                    
+                    mock_event = MockEvent(user_id, postback_data)
+                    handle_voice_menu_postback(mock_event, menu_command)
+                    return
+                
+                else:
+                    current_app.logger.warning(f"未處理的語音選單指令: {menu_command}")
+                    return
+
+            # 先檢查是否為用藥提醒指令（只有在不是選單指令時才檢查）
             reminder_parse_start_time = time.time()
             
             # 優先使用超快速本地解析
@@ -281,120 +427,6 @@ def handle_message_dispatcher(event):
                     current_app.logger.info(f"[語音處理] 成員選擇選單顯示完成 - 處理耗時: {member_selection_time:.3f}秒, 總耗時: {total_time:.3f}秒")
                 return
             
-            # 檢查是否為選單指令
-            menu_check_start_time = time.time()
-            if extra_data.get('is_menu_command', False):
-                menu_command = extra_data.get('menu_command')
-                postback_data = extra_data.get('postback_data')
-                menu_check_time = time.time() - menu_check_start_time
-                
-                current_app.logger.info(f"[語音處理] 選單指令檢測耗時: {menu_check_time:.3f}秒, 指令: {menu_command}")
-                
-                # 處理不同類型的語音選單指令
-                menu_process_start_time = time.time()
-                if menu_command == 'query_self_reminders':
-                    # 查詢本人提醒 - 語音指令處理
-                    try:
-                        from app.utils.flex import reminder as flex_reminder
-                        from app.services.reminder_service import ReminderService
-                        
-                        current_app.logger.info(f"開始處理語音查詢本人提醒 - 用戶: {user_id}")
-                        
-                        # 確保用戶存在
-                        UserService.get_or_create_user(user_id)
-                        
-                        # 獲取用戶的所有成員
-                        members = UserService.get_user_members(user_id)
-                        current_app.logger.info(f"用戶成員列表: {[m['member'] for m in members]}")
-                        
-                        # 找到本人的成員資料
-                        target_member = next((m for m in members if m['member'] == '本人'), None)
-                        
-                        if target_member:
-                            current_app.logger.info(f"找到本人成員: {target_member}")
-                            
-                            # 獲取本人的提醒列表
-                            reminders = ReminderService.get_reminders_for_member(user_id, "本人")
-                            current_app.logger.info(f"本人提醒數量: {len(reminders) if reminders else 0}")
-                            
-                            if reminders and len(reminders) > 0:
-                                # 有提醒記錄，顯示卡片
-                                liff_id = current_app.config.get('LIFF_ID_MANUAL_REMINDER')
-                                if liff_id:
-                                    flex_message = flex_reminder.create_reminder_list_carousel(target_member, reminders, liff_id)
-                                    line_bot_api.push_message(user_id, flex_message)
-                                    current_app.logger.info("語音觸發查詢本人提醒成功 - 顯示提醒卡片")
-                                else:
-                                    # LIFF ID 未配置，發送文字訊息
-                                    reminder_text = f"📋 您目前有 {len(reminders)} 筆用藥提醒：\n\n"
-                                    for i, reminder in enumerate(reminders[:5], 1):  # 最多顯示5筆
-                                        reminder_text += f"{i}. {reminder.get('drug_name', '未知藥物')} - {reminder.get('frequency_name', '未設定頻率')}\n"
-                                    if len(reminders) > 5:
-                                        reminder_text += f"\n...還有 {len(reminders) - 5} 筆提醒"
-                                    line_bot_api.push_message(user_id, TextSendMessage(text=reminder_text))
-                                    current_app.logger.info("語音觸發查詢本人提醒成功 - 顯示文字列表")
-                            else:
-                                # 沒有提醒記錄
-                                line_bot_api.push_message(user_id, TextSendMessage(
-                                    text="📋 您目前沒有設定任何用藥提醒。\n\n💡 您可以說「新增提醒」或使用「用藥提醒」選單來建立提醒。"
-                                ))
-                                current_app.logger.info("語音觸發查詢本人提醒成功 - 無提醒記錄")
-                        else:
-                            # 找不到本人成員，自動創建
-                            current_app.logger.warning(f"找不到用戶 {user_id} 的本人資料，嘗試創建")
-                            from app.utils.db import DB
-                            DB.add_member(user_id, "本人")
-                            line_bot_api.push_message(user_id, TextSendMessage(
-                                text="📋 已為您初始化個人資料。\n\n目前沒有用藥提醒，您可以說「新增提醒」來建立第一筆提醒。"
-                            ))
-                            current_app.logger.info("語音觸發查詢本人提醒 - 已創建本人成員")
-                        
-                    except Exception as e:
-                        current_app.logger.error(f"語音查詢本人提醒失敗: {e}")
-                        import traceback
-                        current_app.logger.error(f"錯誤詳情: {traceback.format_exc()}")
-                        line_bot_api.push_message(user_id, TextSendMessage(text="❌ 查詢提醒時發生錯誤，請稍後再試"))
-                    
-                    return
-                
-                elif menu_command == 'query_family_reminders':
-                    # 查詢家人提醒 - 顯示成員管理選單
-                    try:
-                        from app.utils.flex import reminder as flex_reminder
-                        from app.services.reminder_service import ReminderService
-                        
-                        # 獲取成員摘要資訊
-                        members_summary = ReminderService.get_members_with_reminder_summary(user_id)
-                        liff_id = current_app.config['LIFF_ID_MANUAL_REMINDER']
-                        
-                        flex_message = flex_reminder.create_member_management_carousel(members_summary, liff_id)
-                        line_bot_api.push_message(user_id, flex_message)
-                        current_app.logger.info("語音觸發查詢家人提醒成功 - 顯示成員管理")
-                        
-                    except Exception as e:
-                        current_app.logger.error(f"語音查詢家人提醒失敗: {e}")
-                        line_bot_api.push_message(user_id, TextSendMessage(text="❌ 查詢家人提醒時發生錯誤，請稍後再試"))
-                    
-                    return
-                
-                elif menu_command in ['prescription_scan', 'pill_scan', 'reminder', 'family', 'history', 'health']:
-                    # 其他選單指令 - 使用原有的 postback 處理邏輯
-                    from urllib.parse import parse_qs
-                    
-                    class MockEvent:
-                        def __init__(self, user_id, postback_data):
-                            self.source = type('obj', (object,), {'user_id': user_id})
-                            self.reply_token = None
-                            self.postback = type('obj', (object,), {'data': postback_data})
-                    
-                    mock_event = MockEvent(user_id, postback_data)
-                    handle_voice_menu_postback(mock_event, menu_command)
-                    return
-                
-                else:
-                    current_app.logger.warning(f"未處理的語音選單指令: {menu_command}")
-                    return
-
             # 如果不是選單指令，提供通用幫助
             help_start_time = time.time()
             help_message = f"🎙️ 收到您的語音：「{result}」\n\n我不太確定如何處理這個指令。您可以試試說：\n- 「新增提醒，血壓藥，每天早上8點吃一顆」\n- 「藥單辨識」\n- 「主選單」"
@@ -1829,29 +1861,22 @@ def handle_voice_menu_postback(event, action):
                 current_app.logger.info("語音觸發查詢本人提醒成功 - 備用文字")
                 
         elif action == 'query_family_reminders':
-            # 查詢家人提醒 - 顯示本人的提醒列表卡片
-            from app.services import reminder_service
-            from app.utils.flex import reminder as flex_reminder
-            from flask import current_app
-            
-            # 獲取用戶的所有成員（包括本人）
-            members = UserService.get_user_members(user_id)
-            # 找到本人的成員資料
-            target_member = next((m for m in members if m['member'] == '本人'), None)
-            
-            if target_member:
-                # 獲取本人的提醒列表
-                reminders = reminder_service.ReminderService.get_reminders_for_member(user_id, "本人")
-                liff_id = current_app.config['LIFF_ID_MANUAL_REMINDER']
-                flex_message = flex_reminder.create_reminder_list_carousel(target_member, reminders, liff_id)
+            # 查詢家人提醒 - 顯示成員管理選單
+            try:
+                from app.utils.flex import reminder as flex_reminder
+                from app.services.reminder_service import ReminderService
                 
-                # 使用 push_message 發送訊息
+                # 獲取成員摘要資訊
+                members_summary = ReminderService.get_members_with_reminder_summary(user_id)
+                liff_id = current_app.config['LIFF_ID_MANUAL_REMINDER']
+                
+                flex_message = flex_reminder.create_member_management_carousel(members_summary, liff_id)
                 line_bot_api.push_message(user_id, flex_message)
-                current_app.logger.info(f"語音觸發查詢提醒成功 - 顯示「{member_name}」的提醒列表")
-            else:
-                # 如果找不到指定成員，發送錯誤訊息
-                line_bot_api.push_message(user_id, TextSendMessage(text=f"❌ 找不到「{member_name}」的資料，請先設定提醒對象"))
-                current_app.logger.warning(f"找不到用戶 {user_id} 的「{member_name}」資料")
+                current_app.logger.info("語音觸發查詢家人提醒成功 - 顯示成員管理")
+                
+            except Exception as e:
+                current_app.logger.error(f"語音查詢家人提醒失敗: {e}")
+                line_bot_api.push_message(user_id, TextSendMessage(text="❌ 查詢家人提醒時發生錯誤，請稍後再試"))
             
     except Exception as e:
         current_app.logger.error(f"語音選單 postback 處理錯誤 (action={action}): {e}")

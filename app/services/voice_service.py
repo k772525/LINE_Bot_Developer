@@ -202,7 +202,7 @@ class VoiceService:
                 
                 current_app.logger.info(f"超快速語音識別: '{transcript}' (信心度: {confidence:.2f})")
                 
-                if confidence > 0.3:  # 大幅降低信心度閾值
+                if confidence > 0.2:  # 進一步降低信心度閾值加快速度
                     result = transcript.strip()
                     # 儲存轉錄結果到快取
                     with _cache_lock:
@@ -824,8 +824,8 @@ class VoiceService:
                     current_app.logger.info("使用快取的快速指令結果")
                     return cached_data
         
-        # 對於非常短的音檔（小於20KB），跳過處理
-        if len(audio_bytes) < 20000:
+        # 對於非常短的音檔（小於15KB），跳過處理加快速度
+        if len(audio_bytes) < 15000:
             return None
             
         return None  # 暫時返回None，讓主要流程處理
@@ -851,12 +851,20 @@ class VoiceService:
         # 只保留最常用的指令，減少檢查時間
         clean_text = transcript.replace(" ", "").replace("，", "").replace("。", "")
         
+        # 超快速預檢測 - 檢查關鍵字
+        if "查詢" in clean_text:
+            if "本人" in clean_text or "我的" in clean_text:
+                return "query_self_reminders"
+            elif "家人" in clean_text:
+                return "query_family_reminders"
+        
         # 簡化的指令匹配（按使用頻率排序）
         fast_commands = {
+            "query_self_reminders": ["查詢本人", "我的提醒", "本人提醒"],
+            "query_family_reminders": ["查詢家人", "家人提醒", "查看家人"],
             "reminder": ["新增提醒", "設定提醒", "用藥提醒", "提醒我吃", "幫我新增"],
             "prescription_scan": ["藥單辨識", "掃描藥單", "辨識藥單"],
             "pill_scan": ["藥品辨識", "這是什麼藥"],
-            "query_self_reminders": ["查詢本人", "我的提醒"],
             "health": ["健康紀錄", "記錄體重", "記錄血壓"]
         }
         
